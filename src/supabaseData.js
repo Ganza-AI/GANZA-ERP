@@ -471,6 +471,8 @@ export async function loadAllData() {
             price: Number(item.price) || 0
         })),
         total: Number(o.total) || 0,
+        expense: Number(o.expense) || 0,
+        shippingFee: Number(o.shipping_fee) || 0,
         status: o.status || 'Mới',
         paymentMethod: o.payment_method || 'Tiền mặt',
         paymentStatus: o.payment_status || 'Chưa thanh toán'
@@ -677,6 +679,8 @@ async function _performSync(demoData) {
                     date: order.date || new Date().toISOString().split('T')[0],
                     time: order.time || null,
                     total: order.total || 0,
+                    expense: order.expense || 0,
+                    shipping_fee: order.shippingFee || 0,
                     status: order.status || 'Mới',
                     payment_method: order.paymentMethod || 'Tiền mặt',
                     payment_status: order.paymentStatus || 'Chưa thanh toán'

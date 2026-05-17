@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS public.orders (
     date DATE NOT NULL DEFAULT CURRENT_DATE,
     time TEXT,
     total NUMERIC DEFAULT 0,
+    expense NUMERIC DEFAULT 0,
+    shipping_fee NUMERIC DEFAULT 0,
     status TEXT DEFAULT 'Mới' CHECK (status IN ('Mới', 'Đang xử lý', 'Đã giao', 'Hoàn thành', 'Hủy')),
     payment_method TEXT DEFAULT 'Tiền mặt',
     payment_status TEXT DEFAULT 'Chưa thanh toán' CHECK (payment_status IN ('Chưa thanh toán', 'Đã thanh toán', 'Công nợ')),
