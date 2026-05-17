@@ -99,11 +99,13 @@ CREATE TABLE IF NOT EXISTS public.order_items (
     product_code TEXT,
     product_name TEXT NOT NULL,
     quantity INTEGER NOT NULL DEFAULT 1,
+    delivered_qty INTEGER NOT NULL DEFAULT 0,
     price NUMERIC NOT NULL DEFAULT 0,
     discount NUMERIC DEFAULT 0,
     discount_type TEXT DEFAULT 'percent',
     created_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE IF EXISTS public.order_items ADD COLUMN IF NOT EXISTS delivered_qty INTEGER NOT NULL DEFAULT 0;
 
 -- 7. BẢNG ĐƠN MUA HÀNG (purchases)
 CREATE TABLE IF NOT EXISTS public.purchases (

@@ -109,9 +109,20 @@ window._supabaseData = null
                         this.demoData = JSON.parse(saved);
                         console.log('✅ LOADED EXISTING DATA FROM LOCALSTORAGE');
                         console.log('   Data size:', saved.length, 'bytes');
+                        console.log('DEBUG loaded demoData:', {
+                            orders: (this.demoData.orders || []).map(o => ({
+                                id: o.id,
+                                status: o.status,
+                                deliveryMethod: o.deliveryMethod,
+                                deliveryNotes: o.deliveryNotes,
+                                products: (o.products || []).map(p => ({ id: p.id, quantity: p.quantity, deliveredQty: p.deliveredQty }))
+                            })),
+                            inventoryHistory: (this.demoData.inventoryHistory || []).slice(-5)
+                        });
 
                         // Migrate data: Thêm minStock cho sản phẩm cũ nếu chưa có
                         this.migrateProductData();
+                        this.migrateLegacyOrderAndHistoryData();
 
                         // Legacy data may not contain `debt`; đảm bảo luôn có trường với giá trị 0
                         this.demoData.customers = this.demoData.customers.map(c => ({
@@ -168,6 +179,91 @@ window._supabaseData = null
                 if (needsSave) {
                     this.saveToLocalStorage();
                     console.log('✅ Đã cập nhật dữ liệu sản phẩm với trường minStock, soldQty và purchasedQty');
+                }
+            }
+
+            migrateLegacyOrderAndHistoryData() {
+                let needsSave = false;
+
+                this.demoData.orders = Array.isArray(this.demoData.orders) ? this.demoData.orders : [];
+                this.demoData.orders.forEach(order => {
+                    if (!order.deliveryMethod && order.delivery_method) {
+                        order.deliveryMethod = order.delivery_method;
+                        needsSave = true;
+                    }
+                    if (!order.deliveryNotes && (order.delivery_notes || order.deliveryNote || order.delivery_note)) {
+                        order.deliveryNotes = order.delivery_notes || order.deliveryNote || order.delivery_note;
+                        needsSave = true;
+                    }
+                    if (!Array.isArray(order.products)) {
+                        order.products = [];
+                        needsSave = true;
+                    }
+                    order.products.forEach(product => {
+                        const deliveredQty = Number(product.deliveredQty ?? product.delivered_qty ?? 0);
+                        if (product.deliveredQty !== deliveredQty) {
+                            product.deliveredQty = deliveredQty;
+                            needsSave = true;
+                        }
+                        if (typeof product.quantity === 'string') {
+                            product.quantity = Number(product.quantity) || 0;
+                            needsSave = true;
+                        }
+                        if (typeof product.price === 'string') {
+                            product.price = Number(product.price) || 0;
+                            needsSave = true;
+                        }
+                    });
+                    if (!order.status) {
+                        order.status = 'Mới';
+                        needsSave = true;
+                    }
+                });
+
+                this.demoData.inventoryHistory = Array.isArray(this.demoData.inventoryHistory) ? this.demoData.inventoryHistory : [];
+                this.demoData.inventoryHistory.forEach(entry => {
+                    const createdAt = entry.timestamp ? new Date(entry.timestamp) : entry.created_at ? new Date(entry.created_at) : null;
+                    if (createdAt) {
+                        const dateValue = createdAt.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+                        const timeValue = createdAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
+                        if (!entry.date || entry.date !== dateValue) {
+                            entry.date = entry.date || dateValue;
+                            needsSave = true;
+                        }
+                        if (!entry.time || entry.time !== timeValue) {
+                            entry.time = entry.time || timeValue;
+                            needsSave = true;
+                        }
+                    }
+                    if (!entry.deliveryMethod && entry.delivery_method) {
+                        entry.deliveryMethod = entry.delivery_method;
+                        needsSave = true;
+                    }
+                    if (!entry.customerId && entry.customer_id) {
+                        entry.customerId = entry.customer_id;
+                        needsSave = true;
+                    }
+                    if (!entry.customerName && entry.customer_name) {
+                        entry.customerName = entry.customer_name;
+                        needsSave = true;
+                    }
+                    if (!entry.productId && entry.product_code) {
+                        entry.productId = entry.product_code;
+                        needsSave = true;
+                    }
+                    if (!entry.productName && entry.product_name) {
+                        entry.productName = entry.product_name;
+                        needsSave = true;
+                    }
+                    if (typeof entry.quantity === 'string') {
+                        entry.quantity = Number(entry.quantity) || 0;
+                        needsSave = true;
+                    }
+                });
+
+                if (needsSave) {
+                    this.saveToLocalStorage();
+                    console.log('✅ Đã migrate dữ liệu đơn hàng/lich sử kho cũ để hiển thị đúng');
                 }
             }
 
@@ -2076,6 +2172,7 @@ window._supabaseData = null
                                 return `<div style="display: flex; flex-direction: column; gap: 4px;">
                                             <span>${delivered}/${ordered}</span>
                                             <span style="font-size: 11px; color: #6b7280;">${progress}%</span>
+                                            ${order.deliveryMethod ? `<span style="font-size: 11px; color: #6b7280;">PT: ${order.deliveryMethod}</span>` : ''}
                                         </div>`;
                             })()}
                         </td>
@@ -4361,6 +4458,16 @@ window._supabaseData = null
                     const jsonStr = JSON.stringify(this.demoData);
                     localStorage.setItem('erp_vietnam_data', jsonStr);
                     console.log('✅ Data saved to localStorage:', jsonStr.length, 'bytes');
+                console.log('DEBUG demoData snapshot:', {
+                    orders: (this.demoData.orders || []).map(o => ({
+                        id: o.id,
+                        status: o.status,
+                        deliveryMethod: o.deliveryMethod,
+                        deliveryNotes: o.deliveryNotes,
+                        products: (o.products || []).map(p => ({ id: p.id, quantity: p.quantity, deliveredQty: p.deliveredQty }))
+                    })),
+                    inventoryHistory: (this.demoData.inventoryHistory || []).slice(-5)
+                });
 
                     // Đồng bộ lên Supabase (debounced 2 giây)
                     if (window._supabaseDataLoaded) {
@@ -7776,6 +7883,18 @@ window._supabaseData = null
 
                 // Save to localStorage
                 this.saveToLocalStorage();
+                console.log('DEBUG delivery saved:', {
+                    productId: product.id,
+                    productName: product.name,
+                    customerId: customer.id,
+                    customerName: customer.name,
+                    quantity,
+                    oldStock,
+                    newStock: product.stock,
+                    deliveryMethod,
+                    notes,
+                    latestHistory: this.demoData.inventoryHistory ? this.demoData.inventoryHistory[0] : null
+                });
 
                 // Show success notification
                 this.showNotification(
@@ -7895,6 +8014,15 @@ window._supabaseData = null
                 order.customerName = customer.name;
 
                 this.saveToLocalStorage();
+                console.log('DEBUG order delivery saved:', {
+                    orderId: order.id,
+                    status: order.status,
+                    deliveryMethod,
+                    notes,
+                    totalDelivered,
+                    products: order.products.map(item => ({ id: item.id, quantity: item.quantity, deliveredQty: item.deliveredQty })),
+                    latestHistory: this.demoData.inventoryHistory ? this.demoData.inventoryHistory[0] : null
+                });
 
                 this.showNotification(
                     `✅ Giao hàng thành công cho đơn ${order.id}!\n` +
@@ -7948,6 +8076,14 @@ window._supabaseData = null
                     `;
                 }).join('');
 
+                const selectedDeliveryMethod = order.deliveryMethod || '';
+                const deliveryMethodOptions = ['Xe máy', 'Ô tô', 'Giao hàng nhanh', 'Khác'];
+                const deliveryMethodOptionsHTML = deliveryMethodOptions.map(method => `
+                        <option value="${method}" ${method === selectedDeliveryMethod ? 'selected' : ''}>${method}</option>
+                    `).join('');
+
+                const orderDeliveryNotes = order.deliveryNotes || '';
+
                 const formHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="closeModal(this)">
                         <div style="background: white; padding: 32px; border-radius: 12px; width: 900px; max-width: 95vw; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
@@ -7972,10 +8108,7 @@ window._supabaseData = null
                                         <div style="margin-top: 12px;">
                                             <label style="display: block; margin-bottom: 8px; font-weight: 600;">Phương tiện giao:</label>
                                             <select name="deliveryMethod" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
-                                                <option value="Xe máy">Xe máy</option>
-                                                <option value="Ô tô">Ô tô</option>
-                                                <option value="Giao hàng nhanh">Giao hàng nhanh</option>
-                                                <option value="Khác">Khác</option>
+                                                ${deliveryMethodOptionsHTML}
                                             </select>
                                         </div>
                                     </div>
@@ -7992,7 +8125,7 @@ window._supabaseData = null
                                 </div>
                                 <div style="margin-bottom: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Ghi chú giao hàng:</label>
-                                    <textarea name="notes" rows="2" placeholder="Ghi chú vận chuyển hoặc lưu ý..." style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; resize: vertical;"></textarea>
+                                    <textarea name="notes" rows="2" placeholder="Ghi chú vận chuyển hoặc lưu ý..." style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; resize: vertical;">${orderDeliveryNotes}</textarea>
                                 </div>
                                 <div style="display: flex; gap: 12px; justify-content: flex-end;">
                                     <button type="button" onclick="closeModal(this.closest('div[style*=fixed]'))" style="padding: 12px 24px; border: 2px solid #e5e7eb; background: white; border-radius: 8px; cursor: pointer;">Hủy</button>

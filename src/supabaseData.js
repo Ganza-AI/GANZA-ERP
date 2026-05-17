@@ -251,7 +251,8 @@ export async function addOrder(order, items) {
     if (items && items.length > 0) {
         const orderItems = items.map(item => ({
             ...item,
-            order_id: orderData.id
+            order_id: orderData.id,
+            delivered_qty: item.deliveredQty || 0
         }))
         const { error: itemsError } = await supabase
             .from('order_items')
@@ -468,7 +469,8 @@ export async function loadAllData() {
             id: item.product_code || '',
             name: item.product_name,
             quantity: item.quantity,
-            price: Number(item.price) || 0
+            price: Number(item.price) || 0,
+            deliveredQty: Number(item.delivered_qty) || 0
         })),
         total: Number(o.total) || 0,
         expense: Number(o.expense) || 0,
@@ -496,22 +498,30 @@ export async function loadAllData() {
         paymentStatus: p.payment_status || 'Chưa thanh toán'
     }))
 
-    const mappedInventoryHistory = inventoryHistory.map(h => ({
-        id: h.id,
-        productCode: h.product_code || '',
-        productName: h.product_name || '',
-        type: h.type,
-        quantity: h.quantity,
-        oldStock: h.old_stock,
-        newStock: h.new_stock,
-        reason: h.reason || '',
-        referenceCode: h.reference_code || '',
-        deliveryMethod: h.delivery_method || '',
-        customerId: h.customer_id || '',
-        customerName: h.customer_name || '',
-        notes: h.notes || '',
-        timestamp: h.created_at
-    }))
+    const mappedInventoryHistory = inventoryHistory.map(h => {
+        const createdAt = h.created_at ? new Date(h.created_at) : new Date();
+        const formattedDate = createdAt.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+        const formattedTime = createdAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
+        return {
+            id: h.id,
+            _supabaseId: h.id,
+            productCode: h.product_code || '',
+            productName: h.product_name || '',
+            type: h.type,
+            quantity: h.quantity,
+            oldStock: h.old_stock,
+            newStock: h.new_stock,
+            reason: h.reason || '',
+            referenceCode: h.reference_code || '',
+            deliveryMethod: h.delivery_method || '',
+            customerId: h.customer_id || '',
+            customerName: h.customer_name || '',
+            notes: h.notes || '',
+            date: formattedDate,
+            time: formattedTime,
+            timestamp: h.created_at
+        }
+    })
 
     return {
         customers: mappedCustomers,
@@ -718,7 +728,8 @@ async function _performSync(demoData) {
                             product_code: p.id || null,
                             product_name: p.name,
                             quantity: p.quantity || 1,
-                            price: p.price || 0
+                            price: p.price || 0,
+                            delivered_qty: p.deliveredQty || 0
                         }))
                         const { error: itemsErr } = await supabase
                             .from('order_items')
@@ -790,7 +801,7 @@ async function _performSync(demoData) {
         // 7. Sync Inventory History (insert only, no upsert needed since entries are immutable)
         // Only sync new entries that don't have a UUID _supabaseId
         if (demoData.inventoryHistory && demoData.inventoryHistory.length > 0) {
-            const newEntries = demoData.inventoryHistory.filter(h => !h.id || typeof h.id !== 'string' || h.id.length < 30)
+            const newEntries = demoData.inventoryHistory.filter(h => !h._supabaseId)
             if (newEntries.length > 0) {
                 const historyData = newEntries.map(h => ({
                     product_code: h.productCode || null,
@@ -804,12 +815,30 @@ async function _performSync(demoData) {
                     delivery_method: h.deliveryMethod || null,
                     customer_id: h.customerId || null,
                     customer_name: h.customerName || null,
-                    notes: h.notes || null
+                    notes: h.notes || null,
+                    created_at: h.timestamp || (h.date ? new Date(`${h.date} ${h.time || '00:00:00'}`).toISOString() : new Date().toISOString())
                 }))
-                const { error } = await supabase
+                const { data: insertedHistory, error } = await supabase
                     .from('inventory_history')
                     .insert(historyData)
-                if (error) errors.push({ table: 'inventory_history', error })
+                    .select()
+                if (error) {
+                    errors.push({ table: 'inventory_history', error })
+                } else if (insertedHistory && insertedHistory.length === newEntries.length) {
+                    insertedHistory.forEach((row, index) => {
+                        const entry = newEntries[index]
+                        if (entry) {
+                            entry._supabaseId = row.id
+                            entry.id = row.id
+                        }
+                    })
+                    try {
+                        localStorage.setItem('erp_vietnam_data', JSON.stringify(demoData))
+                        console.log('✅ Persisted synced inventory history IDs to localStorage')
+                    } catch (persistError) {
+                        console.warn('⚠️ Could not persist synced inventory history IDs to localStorage:', persistError)
+                    }
+                }
             }
         }
 
