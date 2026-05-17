@@ -12975,7 +12975,7 @@ window._supabaseData = null
         if (queryCreds.email && queryCreds.password) {
             document.getElementById('username').value = queryCreds.email;
             document.getElementById('password').value = queryCreds.password;
-            await handleLogin(queryCreds.email, queryCreds.password);
+            handleLogin(queryCreds.email, queryCreds.password).catch(console.error);
         }
 
         // Logout functionality
