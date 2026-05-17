@@ -473,6 +473,8 @@ export async function loadAllData() {
         total: Number(o.total) || 0,
         expense: Number(o.expense) || 0,
         shippingFee: Number(o.shipping_fee) || 0,
+        deliveryMethod: o.delivery_method || '',
+        deliveryNotes: o.delivery_notes || '',
         status: o.status || 'Mới',
         paymentMethod: o.payment_method || 'Tiền mặt',
         paymentStatus: o.payment_status || 'Chưa thanh toán'
@@ -504,6 +506,10 @@ export async function loadAllData() {
         newStock: h.new_stock,
         reason: h.reason || '',
         referenceCode: h.reference_code || '',
+        deliveryMethod: h.delivery_method || '',
+        customerId: h.customer_id || '',
+        customerName: h.customer_name || '',
+        notes: h.notes || '',
         timestamp: h.created_at
     }))
 
@@ -681,6 +687,8 @@ async function _performSync(demoData) {
                     total: order.total || 0,
                     expense: order.expense || 0,
                     shipping_fee: order.shippingFee || 0,
+                    delivery_method: order.deliveryMethod || null,
+                    delivery_notes: order.deliveryNotes || null,
                     status: order.status || 'Mới',
                     payment_method: order.paymentMethod || 'Tiền mặt',
                     payment_status: order.paymentStatus || 'Chưa thanh toán'
@@ -792,7 +800,11 @@ async function _performSync(demoData) {
                     old_stock: h.oldStock ?? null,
                     new_stock: h.newStock ?? null,
                     reason: h.reason || null,
-                    reference_code: h.referenceCode || null
+                    reference_code: h.referenceCode || null,
+                    delivery_method: h.deliveryMethod || null,
+                    customer_id: h.customerId || null,
+                    customer_name: h.customerName || null,
+                    notes: h.notes || null
                 }))
                 const { error } = await supabase
                     .from('inventory_history')

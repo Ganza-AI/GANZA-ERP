@@ -137,12 +137,16 @@ CREATE TABLE IF NOT EXISTS public.inventory_history (
     product_id UUID REFERENCES public.products(id) ON DELETE SET NULL,
     product_code TEXT,
     product_name TEXT,
-    type TEXT NOT NULL CHECK (type IN ('import', 'export', 'adjust', 'order', 'purchase', 'return')),
+    type TEXT NOT NULL CHECK (type IN ('import', 'export', 'adjust', 'order', 'purchase', 'return', 'delivery')),
     quantity INTEGER NOT NULL,
     old_stock INTEGER,
     new_stock INTEGER,
     reason TEXT,
     reference_code TEXT,
+    delivery_method TEXT,
+    customer_id UUID REFERENCES public.customers(id) ON DELETE SET NULL,
+    customer_name TEXT,
+    notes TEXT,
     user_id UUID REFERENCES auth.users(id),
     created_at TIMESTAMPTZ DEFAULT now()
 );
