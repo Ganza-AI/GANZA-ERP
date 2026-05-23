@@ -1,5 +1,5 @@
 import { supabase, getSession } from '/src/supabaseClient.js'
-import { loadAllData, syncAllDataToSupabase, deleteAllDataFromSupabase } from '/src/supabaseData.js'
+import { loadAllData, syncAllDataToSupabase, syncAllDataToSupabaseImmediate, deleteAllDataFromSupabase } from '/src/supabaseData.js'
 
 // Flag để biết đã load data từ Supabase chưa
 window._supabaseDataLoaded = false
@@ -54,32 +54,43 @@ window._supabaseData = null
                 // Kiểm tra xem data đã được load từ Supabase chưa
                 if (window._supabaseDataLoaded && window._supabaseData) {
                     console.log('☁️ LOADING DATA FROM SUPABASE');
-                    this.demoData = window._supabaseData;
+                    if (this.isSupabaseDataUseful(window._supabaseData)) {
+                        this.demoData = window._supabaseData;
 
-                    // Đảm bảo các trường bắt buộc tồn tại
-                    this.demoData.customers = this.demoData.customers || [];
-                    this.demoData.suppliers = this.demoData.suppliers || [];
-                    this.demoData.products = this.demoData.products || [];
-                    this.demoData.categories = this.demoData.categories || [];
-                    this.demoData.orders = this.demoData.orders || [];
-                    this.demoData.purchases = this.demoData.purchases || [];
-                    this.demoData.sales = this.demoData.sales || [];
-                    this.demoData.debts = this.demoData.debts || [];
-                    this.demoData.inventoryHistory = this.demoData.inventoryHistory || [];
+                        // Đảm bảo các trường bắt buộc tồn tại
+                        this.demoData.customers = this.demoData.customers || [];
+                        this.demoData.suppliers = this.demoData.suppliers || [];
+                        this.demoData.products = this.demoData.products || [];
+                        this.demoData.categories = this.demoData.categories || [];
+                        this.demoData.orders = this.demoData.orders || [];
+                        this.demoData.purchases = this.demoData.purchases || [];
+                        this.demoData.expenses = this.demoData.expenses || [];
+                        this.demoData.expenseCategories = this.demoData.expenseCategories || this.getDefaultExpenseCategories();
+                        this.demoData.sales = this.demoData.sales || [];
+                        this.demoData.debts = this.demoData.debts || [];
+                        this.demoData.inventoryHistory = this.demoData.inventoryHistory || [];
+                        this.demoData.deliveries = this.demoData.deliveries || [];
 
-                    // Migrate data nếu cần
-                    this.migrateProductData();
+                        // Migrate data nếu cần
+                        this.migrateProductData();
+                        this.migrateLegacyOrderAndHistoryData();
 
-                    console.log('📊 Supabase Data Summary:');
-                    console.log(`   - Customers: ${this.demoData.customers.length}`);
-                    console.log(`   - Products: ${this.demoData.products.length}`);
-                    console.log(`   - Orders: ${this.demoData.orders.length}`);
-                    console.log(`   - Suppliers: ${this.demoData.suppliers.length}`);
-                    console.log(`   - Categories: ${this.demoData.categories.length}`);
+                        console.log('📊 Supabase Data Summary:');
+                        console.log(`   - Customers: ${this.demoData.customers.length}`);
+                        console.log(`   - Products: ${this.demoData.products.length}`);
+                        console.log(`   - Orders: ${this.demoData.orders.length}`);
+                        console.log(`   - Suppliers: ${this.demoData.suppliers.length}`);
+                        console.log(`   - Categories: ${this.demoData.categories.length}`);
+                        console.log(`   - Deliveries: ${this.demoData.deliveries.length}`);
 
-                    // Cũng lưu vào localStorage làm backup/cache
-                    this.saveToLocalStorage();
-                    return;
+                        // Cũng lưu vào localStorage làm backup/cache
+                        this.saveToLocalStorage();
+                        return;
+                    }
+
+                    console.warn('⚠️ Supabase data is empty or incomplete, falling back to localStorage');
+                    window._supabaseDataLoaded = false;
+                    window._supabaseData = null;
                 }
 
                 // Fallback: load từ localStorage nếu Supabase không khả dụng
@@ -96,9 +107,12 @@ window._supabaseData = null
                         categories: [],
                         orders: [],
                         purchases: [],
+                        expenses: [],
+                        expenseCategories: this.getDefaultExpenseCategories(),
                         sales: [],
                         debts: [],
-                        inventoryHistory: []
+                        inventoryHistory: [],
+                        deliveries: []
                     };
                     return;
                 }
@@ -152,6 +166,15 @@ window._supabaseData = null
                 this.saveToLocalStorage();
             }
 
+            isSupabaseDataUseful(data) {
+                if (!data || typeof data !== 'object') {
+                    return false;
+                }
+
+                const arraysToCheck = ['customers', 'suppliers', 'products', 'categories', 'orders', 'purchases', 'expenses', 'inventoryHistory'];
+                return arraysToCheck.some(key => Array.isArray(data[key]) && data[key].length > 0);
+            }
+
             // Migrate data để thêm minStock cho sản phẩm cũ
             migrateProductData() {
                 let needsSave = false;
@@ -195,11 +218,23 @@ window._supabaseData = null
                         order.deliveryNotes = order.delivery_notes || order.deliveryNote || order.delivery_note;
                         needsSave = true;
                     }
+                    if (typeof order.shippingFee === 'undefined' && typeof order.shipping_fee !== 'undefined') {
+                        order.shippingFee = Number(order.shipping_fee) || 0;
+                        needsSave = true;
+                    }
                     if (!Array.isArray(order.products)) {
                         order.products = [];
                         needsSave = true;
                     }
                     order.products.forEach(product => {
+                        if (typeof product.discount === 'undefined' && typeof product.discount_amount !== 'undefined') {
+                            product.discount = Number(product.discount_amount) || 0;
+                            needsSave = true;
+                        }
+                        if (!product.discountType && product.discount_type) {
+                            product.discountType = product.discount_type;
+                            needsSave = true;
+                        }
                         const deliveredQty = Number(product.deliveredQty ?? product.delivered_qty ?? 0);
                         if (product.deliveredQty !== deliveredQty) {
                             product.deliveredQty = deliveredQty;
@@ -213,12 +248,91 @@ window._supabaseData = null
                             product.price = Number(product.price) || 0;
                             needsSave = true;
                         }
+                        if (typeof product.discount === 'string') {
+                            product.discount = Number(product.discount) || 0;
+                            needsSave = true;
+                        }
+                        if (!product.discountType) {
+                            product.discountType = 'percent';
+                            needsSave = true;
+                        }
                     });
                     if (!order.status) {
                         order.status = 'Mới';
                         needsSave = true;
                     }
+                    if (!Array.isArray(order.paymentHistory)) {
+                        order.paymentHistory = [];
+                        needsSave = true;
+                    }
+                    order.paymentHistory.forEach(payment => {
+                        const normalizedAmount = Number(payment.amount) || 0;
+                        if (payment.amount !== normalizedAmount) {
+                            payment.amount = normalizedAmount;
+                            needsSave = true;
+                        }
+                        if (!payment.method && order.paymentMethod) {
+                            payment.method = order.paymentMethod;
+                            needsSave = true;
+                        }
+                        if (!payment.date && order.date) {
+                            payment.date = order.date;
+                            needsSave = true;
+                        }
+                    });
+
+                    if (order.paymentStatus === 'Đã thanh toán' && order.paymentHistory.length === 0 && Number(order.total) > 0) {
+                        const customer = (this.demoData.customers || []).find(c => c.id === order.customerId);
+                        this.recordOrderPayment(order, customer, Number(order.total) || 0, {
+                            id: `PAY_INIT_${order.id}`,
+                            date: order.date || this.getVietnamTime().toISOString().split('T')[0],
+                            method: order.paymentMethod || 'Tiền mặt',
+                            notes: 'Khôi phục lịch sử thanh toán cho đơn đã thanh toán',
+                            timestamp: order.time || this.formatTimeNow(),
+                            remainingDebt: customer ? Number(customer.debt) || 0 : 0
+                        });
+                        needsSave = true;
+                    } else if (this.syncOrderPaymentTotals(order)) {
+                        needsSave = true;
+                    }
                 });
+
+                const defaultExpenseCategories = this.getDefaultExpenseCategories();
+                this.demoData.expenses = Array.isArray(this.demoData.expenses) ? this.demoData.expenses : [];
+                this.demoData.expenseCategories = Array.isArray(this.demoData.expenseCategories) && this.demoData.expenseCategories.length > 0
+                    ? Array.from(new Set([...defaultExpenseCategories, ...this.demoData.expenseCategories.filter(Boolean)]))
+                    : defaultExpenseCategories;
+
+                this.demoData.expenses.forEach(expense => {
+                    if (!expense.id) {
+                        expense.id = `CP${Date.now()}${Math.floor(Math.random() * 1000)}`;
+                        needsSave = true;
+                    }
+                    if (!expense.date) {
+                        expense.date = this.getVietnamTime().toISOString().split('T')[0];
+                        needsSave = true;
+                    }
+                    if (!expense.category) {
+                        expense.category = 'Khác';
+                        needsSave = true;
+                    }
+                    if (typeof expense.amount === 'string') {
+                        expense.amount = Number(expense.amount) || 0;
+                        needsSave = true;
+                    }
+                    if (!expense.paymentMethod) {
+                        expense.paymentMethod = 'Tiền mặt';
+                        needsSave = true;
+                    }
+                    if (!this.demoData.expenseCategories.includes(expense.category)) {
+                        this.demoData.expenseCategories.push(expense.category);
+                        needsSave = true;
+                    }
+                });
+
+                if (this.syncCustomerDebtTotals()) {
+                    needsSave = true;
+                }
 
                 this.demoData.inventoryHistory = Array.isArray(this.demoData.inventoryHistory) ? this.demoData.inventoryHistory : [];
                 this.demoData.inventoryHistory.forEach(entry => {
@@ -267,48 +381,205 @@ window._supabaseData = null
                 }
             }
 
-            // Clear dữ liệu cũ nếu có ngày tháng sai
-            clearOldDataIfNeeded() {
-                const today = this.getVietnamTime().toISOString().split('T')[0];
-                const currentDate = this.getVietnamTime();
+            getOrderPaidAmount(order) {
+                if (!order) return 0;
+                if (Array.isArray(order.paymentHistory) && order.paymentHistory.length > 0) {
+                    return order.paymentHistory.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+                }
+                return Number(order.paidAmount) || 0;
+            }
 
-                // Force clear if date is not August 11, 2025
-                const expectedDate = '2025-08-11';
+            getOrderRemainingBalance(order) {
+                if (!order) return 0;
+                const total = Number(order.total) || 0;
+                const paidAmount = this.getOrderPaidAmount(order);
+                return Math.max(total - paidAmount, 0);
+            }
 
-                // Check if stored data has old dates or wrong date
-                const storedData = localStorage.getItem('erp_data');
-                if (storedData) {
-                    try {
-                        const data = JSON.parse(storedData);
-                        if (data.orders && data.orders.length > 0) {
-                            const firstOrderDate = data.orders[0].date;
+            syncOrderPaymentTotals(order) {
+                if (!order) return false;
+                const paidAmount = this.getOrderPaidAmount(order);
+                const remainingBalance = this.getOrderRemainingBalance(order);
+                let changed = false;
 
-                            // If date is not today (Aug 11, 2025), clear all data
-                            if (!firstOrderDate.startsWith('2025-08-1')) {
-                                console.log('Clearing old data with wrong date:', firstOrderDate, 'expected:', expectedDate);
-                                localStorage.clear();
-                                // Add timestamp to force fresh data
-                                localStorage.setItem('last_data_refresh', currentDate.toISOString());
-                                return true; // Indicates data was cleared
-                            }
-                        }
-                    } catch (e) {
-                        console.log('Error checking stored data, clearing all:', e);
-                        localStorage.clear();
-                        return true;
+                if (Number(order.paidAmount) !== paidAmount) {
+                    order.paidAmount = paidAmount;
+                    changed = true;
+                }
+                if (Number(order.remainingBalance) !== remainingBalance) {
+                    order.remainingBalance = remainingBalance;
+                    changed = true;
+                }
+
+                return changed;
+            }
+
+            recordOrderPayment(order, customer, amount, options = {}) {
+                const paymentAmount = Number(amount) || 0;
+                if (!order || paymentAmount <= 0) return null;
+
+                if (!Array.isArray(order.paymentHistory)) {
+                    order.paymentHistory = [];
+                }
+
+                const receipt = {
+                    id: options.id || `PAY_${Date.now()}_${order.id || 'ORDER'}`,
+                    date: options.date || order.date || this.getVietnamTime().toISOString().split('T')[0],
+                    amount: paymentAmount,
+                    method: options.method || order.paymentMethod || 'Tiền mặt',
+                    notes: options.notes || '',
+                    timestamp: options.timestamp || this.formatTimeNow()
+                };
+
+                const receiptExists = order.paymentHistory.some(payment => payment.id === receipt.id);
+                if (!receiptExists) {
+                    order.paymentHistory.push(receipt);
+                }
+
+                this.syncOrderPaymentTotals(order);
+
+                if (customer) {
+                    if (!Array.isArray(customer.paymentHistory)) {
+                        customer.paymentHistory = [];
+                    }
+
+                    const linkExists = customer.paymentHistory.some(payment => 
+                        payment.id === receipt.id &&
+                        Array.isArray(payment.ordersAffected) &&
+                        payment.ordersAffected.some(affectedOrder => affectedOrder.orderId === order.id)
+                    );
+
+                    if (!linkExists) {
+                        customer.paymentHistory.push({
+                            id: receipt.id,
+                            date: receipt.date,
+                            amount: paymentAmount,
+                            method: receipt.method,
+                            notes: receipt.notes,
+                            timestamp: receipt.timestamp,
+                            ordersAffected: [{
+                                orderId: order.id,
+                                amount: paymentAmount,
+                                remainingBalance: this.getOrderRemainingBalance(order)
+                            }],
+                            remainingDebt: typeof options.remainingDebt === 'number' ? options.remainingDebt : this.getCustomerDebt(customer.id)
+                        });
                     }
                 }
 
-                // Force clear if no recent refresh
-                const lastRefresh = localStorage.getItem('last_data_refresh');
-                if (!lastRefresh) {
-                    console.log('No refresh timestamp, clearing data');
-                    localStorage.clear();
-                    localStorage.setItem('last_data_refresh', currentDate.toISOString());
+                return receipt;
+            }
+
+            getDefaultExpenseCategories() {
+                return ['Lương', 'Thuê kho', 'Vận chuyển', 'Marketing', 'Điện nước', 'Văn phòng phẩm', 'Bảo trì', 'Khác'];
+            }
+
+            getExpenseCategories() {
+                const categories = Array.isArray(this.demoData.expenseCategories) ? this.demoData.expenseCategories : [];
+                const fromExpenses = (this.demoData.expenses || []).map(expense => expense.category).filter(Boolean);
+                return Array.from(new Set([...this.getDefaultExpenseCategories(), ...categories, ...fromExpenses]));
+            }
+
+            getExpensesInRange(fromDate, toDate) {
+                const startDate = fromDate ? new Date(fromDate) : null;
+                const endDate = toDate ? new Date(toDate) : null;
+                if (endDate) endDate.setHours(23, 59, 59, 999);
+
+                return (this.demoData.expenses || []).filter(expense => {
+                    const expenseDate = new Date(expense.date);
+                    if (startDate && expenseDate < startDate) return false;
+                    if (endDate && expenseDate > endDate) return false;
                     return true;
+                });
+            }
+
+            getExpenseBreakdown(expenses = this.demoData.expenses || []) {
+                return expenses.reduce((breakdown, expense) => {
+                    const category = expense.category || 'Khác';
+                    breakdown[category] = (breakdown[category] || 0) + (Number(expense.amount) || 0);
+                    return breakdown;
+                }, {});
+            }
+
+            getOrderCost(order) {
+                return (order.products || []).reduce((sum, product) => {
+                    const productDetails = this.demoData.products.find(prod => prod.id === product.id);
+                    const importPrice = productDetails ? (Number(productDetails.importPrice) || 0) : 0;
+                    return sum + importPrice * (Number(product.quantity) || 0);
+                }, 0);
+            }
+
+            getOrderRevenueInRange(fromDate, toDate) {
+                const startDate = fromDate ? new Date(fromDate) : null;
+                const endDate = toDate ? new Date(toDate) : null;
+                if (endDate) endDate.setHours(23, 59, 59, 999);
+
+                return (this.demoData.orders || []).reduce((total, order) => {
+                    const orderDate = new Date(order.date);
+                    if (startDate && orderDate < startDate) return total;
+                    if (endDate && orderDate > endDate) return total;
+                    return total + (Number(order.total) || 0);
+                }, 0);
+            }
+
+            getTotalOutstandingDebt(orders = this.demoData.orders || []) {
+                return orders.reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0);
+            }
+
+            syncCustomerDebtTotals() {
+                if (!Array.isArray(this.demoData.customers) || !Array.isArray(this.demoData.orders)) return false;
+                let changed = false;
+
+                this.demoData.customers.forEach(customer => {
+                    const actualDebt = this.demoData.orders
+                        .filter(order => order.customerId === customer.id || order.customerName === customer.name)
+                        .reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0);
+
+                    if (Number(customer.debt) !== actualDebt) {
+                        customer.debt = actualDebt;
+                        changed = true;
+                    }
+                });
+
+                return changed;
+            }
+
+            getCollectedAmountInRange(fromDate, toDate) {
+                const startDate = fromDate ? new Date(fromDate) : null;
+                const endDate = toDate ? new Date(toDate) : null;
+                if (endDate) endDate.setHours(23, 59, 59, 999);
+
+                return (this.demoData.orders || []).reduce((total, order) => {
+                    if (Array.isArray(order.paymentHistory) && order.paymentHistory.length > 0) {
+                        return total + order.paymentHistory.reduce((sum, payment) => {
+                            const paymentDate = new Date(payment.date || order.date);
+                            if (startDate && paymentDate < startDate) return sum;
+                            if (endDate && paymentDate > endDate) return sum;
+                            return sum + (Number(payment.amount) || 0);
+                        }, 0);
+                    }
+
+                    const orderDate = new Date(order.date);
+                    const inRange = (!startDate || orderDate >= startDate) && (!endDate || orderDate <= endDate);
+                    return inRange && order.paymentStatus === 'Đã thanh toán' ? total + (Number(order.total) || 0) : total;
+                }, 0);
+            }
+
+            // Clear corrupted data only when localStorage contains invalid JSON
+            clearOldDataIfNeeded() {
+                const storedData = localStorage.getItem('erp_vietnam_data');
+                if (!storedData) {
+                    return false;
                 }
 
-                return false;
+                try {
+                    JSON.parse(storedData);
+                    return false;
+                } catch (e) {
+                    console.log('Invalid localStorage data detected, removing corrupted erp_vietnam_data:', e);
+                    localStorage.removeItem('erp_vietnam_data');
+                    return true;
+                }
             }
 
             init() {
@@ -376,6 +647,8 @@ window._supabaseData = null
                         { id: 'CAT007', name: 'Phụ kiện', parent: null }
                     ],
                     orders: this.generateOrdersWithCurrentDate(),
+                    expenses: [],
+                    expenseCategories: this.getDefaultExpenseCategories(),
                     purchases: [
                         {
                             id: 'PH001',
@@ -403,7 +676,9 @@ window._supabaseData = null
                         }
                     ],
                     sales: this.generateSalesWithCurrentDate(),
-                    inventoryHistory: []
+                    debts: [],
+                    inventoryHistory: [],
+                    deliveries: []
                 };
             }
 
@@ -766,6 +1041,7 @@ window._supabaseData = null
                     'inventory-history': { title: 'Lịch sử Kho hàng', subtitle: 'Theo dõi lịch sử thay đổi tồn kho' },
                     'inventory-flow': { title: 'Lưu lượng Tồn kho', subtitle: 'Phân tích chi tiết lưu lượng nhập, giao, xuất' },
                     purchases: { title: 'Quản lý Mua hàng', subtitle: 'Đơn mua và nhập hàng từ nhà cung cấp' },
+                    expenses: { title: 'Quản lý Chi phí', subtitle: 'Ghi nhận lương, thuê kho và chi phí vận hành' },
                     debts: { title: 'Quản lý Công nợ', subtitle: 'Theo dõi công nợ khách hàng và nhà cung cấp' },
                     reports: { title: 'Báo cáo Tổng hợp', subtitle: 'Báo cáo doanh thu và hoạt động kinh doanh' },
                     settings: { title: 'Cài đặt Hệ thống', subtitle: 'Cấu hình và sao lưu dữ liệu' }
@@ -789,6 +1065,8 @@ window._supabaseData = null
                         return this.getInventoryFlowContent();
                     case 'purchases':
                         return this.getPurchasesContent();
+                    case 'expenses':
+                        return this.getExpensesContent();
                     case 'categories':
                         return this.getCategoriesContent();
                     case 'debts':
@@ -1797,6 +2075,279 @@ window._supabaseData = null
                 `;
             }
 
+            getExpensesContent() {
+                const today = this.getVietnamTime().toISOString().split('T')[0];
+                const firstDay = new Date(this.getVietnamTime().getFullYear(), this.getVietnamTime().getMonth(), 1).toISOString().split('T')[0];
+                const expenses = this.demoData.expenses || [];
+                const monthExpenses = this.getExpensesInRange(firstDay, today);
+                const totalExpenses = expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+                const monthTotal = monthExpenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+                const breakdown = this.getExpenseBreakdown(expenses);
+                const topCategory = Object.entries(breakdown).sort((a, b) => b[1] - a[1])[0];
+                const categoryOptions = this.getExpenseCategories().map(category =>
+                    `<option value="${category}">${category}</option>`
+                ).join('');
+                const expenseRows = expenses
+                    .slice()
+                    .sort((a, b) => new Date(b.date) - new Date(a.date))
+                    .map(expense => `
+                        <tr data-expense-id="${expense.id}" style="border-bottom: 1px solid #e5e7eb;">
+                            <td style="padding: 12px;">${expense.date || ''}</td>
+                            <td style="padding: 12px;">
+                                <span style="background: #eef2ff; color: #3730a3; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">${expense.category || 'Khác'}</span>
+                            </td>
+                            <td style="padding: 12px; text-align: right; font-weight: 700; color: #dc2626;">${(Number(expense.amount) || 0).toLocaleString('vi-VN')} VNĐ</td>
+                            <td style="padding: 12px;">${expense.paymentMethod || 'Tiền mặt'}</td>
+                            <td style="padding: 12px;">${expense.payee || '-'}</td>
+                            <td style="padding: 12px;">${expense.notes || '-'}</td>
+                            <td style="padding: 12px; text-align: center;">
+                                <button onclick="app.deleteExpense('${expense.id}')" style="background: #dc2626; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;">Xóa</button>
+                            </td>
+                        </tr>
+                    `).join('');
+
+                const breakdownRows = Object.entries(breakdown)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([category, amount]) => {
+                        const percent = totalExpenses > 0 ? (amount / totalExpenses * 100).toFixed(1) : '0.0';
+                        return `
+                            <div style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
+                                <div style="display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px;">
+                                    <strong>${category}</strong>
+                                    <span style="font-weight: 700; color: #dc2626;">${amount.toLocaleString('vi-VN')} VNĐ</span>
+                                </div>
+                                <div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
+                                    <div style="height: 100%; width: ${percent}%; background: #ef4444;"></div>
+                                </div>
+                                <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${percent}% tổng chi phí</div>
+                            </div>
+                        `;
+                    }).join('') || '<div style="padding: 20px; color: #6b7280; text-align: center;">Chưa có dữ liệu chi phí</div>';
+
+                return `
+                    <div class="fade-in">
+                        <div class="stats-grid" style="margin-bottom: 24px;">
+                            <div class="stat-card warning">
+                                <div class="stat-header">
+                                    <span class="stat-title">Chi phí tháng này</span>
+                                    <span class="stat-icon">💸</span>
+                                </div>
+                                <div class="stat-value">${monthTotal.toLocaleString('vi-VN')} VNĐ</div>
+                                <div class="stat-change negative">${monthExpenses.length} khoản</div>
+                            </div>
+
+                            <div class="stat-card info">
+                                <div class="stat-header">
+                                    <span class="stat-title">Tổng chi phí</span>
+                                    <span class="stat-icon">📉</span>
+                                </div>
+                                <div class="stat-value">${totalExpenses.toLocaleString('vi-VN')} VNĐ</div>
+                                <div class="stat-change">${expenses.length} khoản đã ghi</div>
+                            </div>
+
+                            <div class="stat-card revenue">
+                                <div class="stat-header">
+                                    <span class="stat-title">Loại lớn nhất</span>
+                                    <span class="stat-icon">📊</span>
+                                </div>
+                                <div class="stat-value">${topCategory ? topCategory[0] : 'N/A'}</div>
+                                <div class="stat-change">${topCategory ? topCategory[1].toLocaleString('vi-VN') + ' VNĐ' : 'Chưa có dữ liệu'}</div>
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; align-items: start;">
+                            <div style="background: white; border-radius: 8px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                <h3 style="margin: 0 0 18px 0; color: var(--text-primary);">Nhập chi phí</h3>
+                                <form onsubmit="app.createExpense(event)">
+                                    <div style="margin-bottom: 14px;">
+                                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Ngày chi phí</label>
+                                        <input type="date" name="date" value="${today}" required style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                    </div>
+                                    <div style="margin-bottom: 14px;">
+                                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Loại chi phí</label>
+                                        <select name="category" style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                            ${categoryOptions}
+                                        </select>
+                                    </div>
+                                    <div style="margin-bottom: 14px;">
+                                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Loại mới (nếu cần)</label>
+                                        <input type="text" name="newCategory" placeholder="Ví dụ: Bảo hiểm, phần mềm..." style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                    </div>
+                                    <div style="margin-bottom: 14px;">
+                                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Số tiền</label>
+                                        <input type="number" name="amount" min="1" required placeholder="0" style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                    </div>
+                                    <div style="margin-bottom: 14px;">
+                                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Phương thức chi</label>
+                                        <select name="paymentMethod" style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                            <option value="Tiền mặt">Tiền mặt</option>
+                                            <option value="Chuyển khoản">Chuyển khoản</option>
+                                            <option value="Thẻ">Thẻ</option>
+                                            <option value="Khác">Khác</option>
+                                        </select>
+                                    </div>
+                                    <div style="margin-bottom: 14px;">
+                                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Người nhận/Nhà cung cấp</label>
+                                        <input type="text" name="payee" placeholder="Nhân viên, chủ kho, nhà cung cấp..." style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                    </div>
+                                    <div style="margin-bottom: 18px;">
+                                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Ghi chú</label>
+                                        <textarea name="notes" placeholder="Diễn giải chi phí" style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px; min-height: 74px; resize: vertical;"></textarea>
+                                    </div>
+                                    <button type="submit" style="width: 100%; background: var(--primary-blue); color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-weight: 700;">Ghi nhận chi phí</button>
+                                </form>
+                            </div>
+
+                            <div style="display: grid; gap: 24px;">
+                                <div style="background: white; border-radius: 8px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap;">
+                                        <h3 style="margin: 0; color: var(--text-primary);">Danh sách chi phí</h3>
+                                        <button onclick="app.exportExpenses()" style="background: var(--primary-green); color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600;">Xuất CSV</button>
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px;">
+                                        <input type="date" id="expense-filter-from" value="${firstDay}" onchange="app.filterExpenseTable()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                        <input type="date" id="expense-filter-to" value="${today}" onchange="app.filterExpenseTable()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                        <select id="expense-filter-category" onchange="app.filterExpenseTable()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                            <option value="">Tất cả loại</option>
+                                            ${categoryOptions}
+                                        </select>
+                                    </div>
+                                    <div style="overflow-x: auto;">
+                                        <table style="width: 100%; border-collapse: collapse;">
+                                            <thead>
+                                                <tr style="background: #f3f4f6;">
+                                                    <th style="padding: 12px; text-align: left;">Ngày</th>
+                                                    <th style="padding: 12px; text-align: left;">Loại</th>
+                                                    <th style="padding: 12px; text-align: right;">Số tiền</th>
+                                                    <th style="padding: 12px; text-align: left;">Phương thức</th>
+                                                    <th style="padding: 12px; text-align: left;">Người nhận</th>
+                                                    <th style="padding: 12px; text-align: left;">Ghi chú</th>
+                                                    <th style="padding: 12px; text-align: center;">Thao tác</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="expenses-table">
+                                                ${expenseRows || '<tr><td colspan="7" style="padding: 24px; text-align: center; color: #6b7280;">Chưa có chi phí nào</td></tr>'}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div style="background: white; border-radius: 8px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                    <h3 style="margin: 0 0 14px 0; color: var(--text-primary);">Tổng hợp theo loại chi phí</h3>
+                                    ${breakdownRows}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            createExpense(event) {
+                event.preventDefault();
+                const form = event.target;
+                const formData = new FormData(form);
+                const newCategory = (formData.get('newCategory') || '').trim();
+                const category = newCategory || formData.get('category') || 'Khác';
+                const amount = Number(formData.get('amount')) || 0;
+
+                if (amount <= 0) {
+                    this.showNotification('Số tiền chi phí phải lớn hơn 0', 'warning');
+                    return;
+                }
+
+                if (!Array.isArray(this.demoData.expenses)) this.demoData.expenses = [];
+                if (!Array.isArray(this.demoData.expenseCategories)) this.demoData.expenseCategories = this.getDefaultExpenseCategories();
+                if (!this.demoData.expenseCategories.includes(category)) {
+                    this.demoData.expenseCategories.push(category);
+                }
+
+                const expense = {
+                    id: `CP${Date.now()}`,
+                    date: formData.get('date') || this.getVietnamTime().toISOString().split('T')[0],
+                    category,
+                    amount,
+                    paymentMethod: formData.get('paymentMethod') || 'Tiền mặt',
+                    payee: (formData.get('payee') || '').trim(),
+                    notes: (formData.get('notes') || '').trim(),
+                    createdAt: this.getVietnamTime().toISOString()
+                };
+
+                this.demoData.expenses.unshift(expense);
+                this.saveToLocalStorage();
+                this.addActivityLog('warning', '💸', `Ghi nhận chi phí ${category}`,
+                    `Số tiền: ${amount.toLocaleString('vi-VN')} VNĐ - Ngày: ${expense.date}`, 'expense');
+                this.showNotification(`Đã ghi nhận chi phí ${amount.toLocaleString('vi-VN')} VNĐ`, 'success');
+                this.loadPage('expenses');
+            }
+
+            deleteExpense(expenseId) {
+                const expense = (this.demoData.expenses || []).find(item => item.id === expenseId);
+                if (!expense) return;
+                if (!confirm(`Xóa chi phí ${expense.category} - ${(Number(expense.amount) || 0).toLocaleString('vi-VN')} VNĐ?`)) return;
+
+                this.demoData.expenses = this.demoData.expenses.filter(item => item.id !== expenseId);
+                this.saveToLocalStorage();
+                this.showNotification('Đã xóa chi phí', 'success');
+                this.loadPage('expenses');
+            }
+
+            filterExpenseTable() {
+                const fromDate = document.getElementById('expense-filter-from')?.value || '';
+                const toDate = document.getElementById('expense-filter-to')?.value || '';
+                const category = document.getElementById('expense-filter-category')?.value || '';
+                const rows = document.querySelectorAll('#expenses-table tr[data-expense-id]');
+                let visibleCount = 0;
+                let visibleTotal = 0;
+
+                rows.forEach(row => {
+                    const expense = (this.demoData.expenses || []).find(item => item.id === row.getAttribute('data-expense-id'));
+                    if (!expense) return;
+                    const expenseDate = new Date(expense.date);
+                    const startDate = fromDate ? new Date(fromDate) : null;
+                    const endDate = toDate ? new Date(toDate) : null;
+                    if (endDate) endDate.setHours(23, 59, 59, 999);
+                    const visible = (!startDate || expenseDate >= startDate) &&
+                        (!endDate || expenseDate <= endDate) &&
+                        (!category || expense.category === category);
+
+                    row.style.display = visible ? '' : 'none';
+                    if (visible) {
+                        visibleCount++;
+                        visibleTotal += Number(expense.amount) || 0;
+                    }
+                });
+
+                this.showNotification(`Đang hiển thị ${visibleCount} khoản chi, tổng ${visibleTotal.toLocaleString('vi-VN')} VNĐ`, 'info');
+            }
+
+            exportExpenses() {
+                const expenses = this.demoData.expenses || [];
+                if (expenses.length === 0) {
+                    this.showNotification('Không có chi phí nào để xuất', 'info');
+                    return;
+                }
+
+                const total = expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+                const csvContent = "data:text/csv;charset=utf-8,\uFEFF" +
+                    `Báo cáo chi phí\n` +
+                    `Ngày xuất,${this.getVietnamTime().toLocaleDateString('vi-VN')}\n` +
+                    `Tổng chi phí,${total}\n\n` +
+                    `Mã,Ngày,Loại chi phí,Số tiền,Phương thức,Người nhận,Ghi chú\n` +
+                    expenses.map(expense =>
+                        `${expense.id},${expense.date},"${expense.category}",${Number(expense.amount) || 0},"${expense.paymentMethod || ''}","${(expense.payee || '').replace(/"/g, '""')}","${(expense.notes || '').replace(/"/g, '""')}"`
+                    ).join('\n');
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `chi_phi_${this.getVietnamTime().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                this.showNotification(`Đã xuất ${expenses.length} khoản chi phí`, 'success');
+            }
+
             getDebtsContent() {
                 // Tính công nợ dựa trên các đơn hàng chưa thanh toán
                 const customerDebtMap = this.demoData.customers.reduce((acc, customer) => {
@@ -1806,7 +2357,7 @@ window._supabaseData = null
 
                 this.demoData.orders.forEach(order => {
                     if (order.paymentStatus !== 'Đã thanh toán' && customerDebtMap.hasOwnProperty(order.customerId)) {
-                        customerDebtMap[order.customerId] += order.total;
+                        customerDebtMap[order.customerId] += this.getOrderRemainingBalance(order);
                     }
                 });
 
@@ -2420,6 +2971,12 @@ window._supabaseData = null
                                     <div class="action-icon">📈</div>
                                     <div class="action-title">Báo cáo tài chính</div>
                                     <div class="action-desc">Tổng quan tài chính và công nợ</div>
+                                </div>
+
+                                <div class="action-card" onclick="app.loadPage('expenses')">
+                                    <div class="action-icon">💸</div>
+                                    <div class="action-title">Chi phí vận hành</div>
+                                    <div class="action-desc">Nhập và phân tích lương, thuê kho, chi phí khác</div>
                                 </div>
 
                                 <div class="action-card" onclick="app.showInventoryExportWithFilter()">
@@ -3391,13 +3948,11 @@ window._supabaseData = null
 
                 // Tính tổng tiền đã thanh toán
                 const totalPaid = customerOrders
-                    .filter(order => order.paymentStatus === 'Đã thanh toán')
-                    .reduce((sum, order) => sum + order.total, 0);
+                    .reduce((sum, order) => sum + this.getOrderPaidAmount(order), 0);
 
                 // Tính công nợ thực tế từ các đơn hàng chưa thanh toán (không dùng customer.debt cũ)
                 const actualDebt = customerOrders
-                    .filter(order => order.paymentStatus !== 'Đã thanh toán')
-                    .reduce((sum, order) => sum + order.total, 0);
+                    .reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0);
 
                 // Danh sách đơn hàng (sắp xếp mới nhất lên trên)
                 const sortedCustomerOrders = this.sortOrdersByDate(customerOrders);
@@ -3663,8 +4218,8 @@ window._supabaseData = null
                 // Tính toán thống kê
                 const totalOrders = customerOrders.length;
                 const totalAmount = customerOrders.reduce((sum, order) => sum + order.total, 0);
-                const paidAmount = customerOrders.filter(o => o.paymentStatus === 'Đã thanh toán').reduce((sum, order) => sum + order.total, 0);
-                const debtAmount = customerOrders.filter(o => o.paymentStatus !== 'Đã thanh toán').reduce((sum, order) => sum + order.total, 0);
+                const paidAmount = customerOrders.reduce((sum, order) => sum + this.getOrderPaidAmount(order), 0);
+                const debtAmount = customerOrders.reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0);
 
                 // Format dates for display
                 const formatStartDate = new Date(startDate).toLocaleDateString('vi-VN');
@@ -4455,6 +5010,7 @@ window._supabaseData = null
             // Local Storage Management + Supabase Sync
             saveToLocalStorage() {
                 try {
+                    this.syncCustomerDebtTotals();
                     const jsonStr = JSON.stringify(this.demoData);
                     localStorage.setItem('erp_vietnam_data', jsonStr);
                     console.log('✅ Data saved to localStorage:', jsonStr.length, 'bytes');
@@ -4669,9 +5225,12 @@ window._supabaseData = null
                             categories: [],
                             orders: [],
                             purchases: [],
+                            expenses: [],
+                            expenseCategories: this.getDefaultExpenseCategories(),
                             sales: [],
                             debts: [],
-                            inventoryHistory: []
+                            inventoryHistory: [],
+                            deliveries: []
                         };
 
                         // 4. Lưu trạng thái trống vào localStorage
@@ -6632,7 +7191,7 @@ window._supabaseData = null
             getCustomerDebt(customerId) {
                 return this.demoData.orders
                     .filter(order => order.customerId === customerId && order.paymentStatus !== 'Đã thanh toán')
-                    .reduce((sum, order) => sum + order.total, 0);
+                    .reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0);
             }
 
             recordPayment(event) {
@@ -6682,30 +7241,32 @@ window._supabaseData = null
                 unpaidOrders.forEach(order => {
                     if (remaining <= 0) return;
 
-                    if (!order.paymentHistory) order.paymentHistory = [];
+                    if (!Array.isArray(order.paymentHistory)) order.paymentHistory = [];
+
+                    const outstandingBalance = this.getOrderRemainingBalance(order);
+                    if (outstandingBalance <= 0) {
+                        order.paymentStatus = 'Đã thanh toán';
+                        this.syncOrderPaymentTotals(order);
+                        return;
+                    }
+
+                    const amountForOrder = Math.min(outstandingBalance, remaining);
 
                     const paymentReceipt = {
                         id: paymentHistory.id,
                         date: paymentDate,
-                        amount: 0
+                        amount: amountForOrder,
+                        method: paymentMethod,
+                        notes: notes,
+                        timestamp: paymentHistory.timestamp
                     };
 
-                    if (order.total <= remaining) {
-                        paymentReceipt.amount = order.total;
-                        remaining -= order.total;
-                        order.paymentStatus = 'Đã thanh toán';
-                        order.paidAmount = (order.paidAmount || 0) + paymentReceipt.amount;
-                        order.remainingBalance = 0;
-                    } else if (remaining > 0) {
-                        paymentReceipt.amount = remaining;
-                        order.paidAmount = (order.paidAmount || 0) + remaining;
-                        order.remainingBalance = order.total - order.paidAmount;
-                        order.paymentStatus = 'Thanh toán một phần';
-                        remaining = 0;
-                    }
+                    remaining -= amountForOrder;
 
                     if (paymentReceipt.amount > 0) {
                         order.paymentHistory.push(paymentReceipt);
+                        this.syncOrderPaymentTotals(order);
+                        order.paymentStatus = order.remainingBalance <= 0 ? 'Đã thanh toán' : 'Thanh toán một phần';
                         paymentHistory.ordersAffected.push({
                             orderId: order.id,
                             amount: paymentReceipt.amount,
@@ -6714,11 +7275,14 @@ window._supabaseData = null
                     }
                 });
 
+                const newDebt = this.getCustomerDebt(customerId);
+                customer.debt = newDebt;
+                paymentHistory.remainingDebt = newDebt;
+
                 if (!customer.paymentHistory) customer.paymentHistory = [];
                 customer.paymentHistory.push(paymentHistory);
 
                 this.saveToLocalStorage();
-                const newDebt = this.getCustomerDebt(customerId);
                 this.addActivityLog('success', '💳', `Thanh toán từ ${customer.name}`, 
                     `Số tiền: ${amount.toLocaleString('vi-VN')} VNĐ - Ngày: ${paymentDate} - Công nợ còn lại: ${newDebt.toLocaleString('vi-VN')} VNĐ`, 'payment');
 
@@ -6751,9 +7315,9 @@ window._supabaseData = null
                 // Tính toán chi tiết nợ
                 let unpaidOrdersHTML = '';
                 unpaidOrders.forEach((order, idx) => {
-                    const remainingBalance = order.remainingBalance || order.total;
-                    const paidAmount = order.paidAmount || 0;
-                    const paymentPercentage = ((paidAmount / order.total) * 100).toFixed(0);
+                    const remainingBalance = this.getOrderRemainingBalance(order);
+                    const paidAmount = this.getOrderPaidAmount(order);
+                    const paymentPercentage = order.total > 0 ? Math.min((paidAmount / order.total) * 100, 100).toFixed(0) : '0';
 
                     unpaidOrdersHTML += `
                         <div style="padding: 12px; background: #f9fafb; border-radius: 8px; margin-bottom: 8px;">
@@ -6917,9 +7481,10 @@ window._supabaseData = null
                     return;
                 }
 
-                const totalPaid = order.paidAmount || 0;
-                const remaining = order.total - totalPaid;
-                const paymentPercentage = ((totalPaid / order.total) * 100).toFixed(1);
+                this.syncOrderPaymentTotals(order);
+                const totalPaid = this.getOrderPaidAmount(order);
+                const remaining = this.getOrderRemainingBalance(order);
+                const paymentPercentage = order.total > 0 ? Math.min((totalPaid / order.total) * 100, 100).toFixed(1) : '0.0';
 
                 // Tạo danh sách thanh toán
                 let paymentHistoryHTML = '';
@@ -6949,7 +7514,7 @@ window._supabaseData = null
                 const modalHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center; overflow-y: auto;" onclick="closeModal(this)">
                         <div style="background: white; padding: 32px; border-radius: 12px; width: 600px; max-width: 90vw; margin: 20px auto;" onclick="event.stopPropagation()">
-                            <h3 style="margin: 0 0 24px 0; color: var(--text-primary);">🕐 Lịch sử thanh toán - Đơn #${order.orderNumber}</h3>
+                            <h3 style="margin: 0 0 24px 0; color: var(--text-primary);">🕐 Lịch sử thanh toán - Đơn #${order.id}</h3>
 
                             <!-- Order Summary -->
                             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 24px;">
@@ -7227,8 +7792,7 @@ window._supabaseData = null
                     const matchById = order.customerId === customerId;
                     const matchByName = order.customer === customer.name || order.customerName === customer.name;
 
-                    const isUnpaid = order.paymentStatus === 'Công nợ' ||
-                                    order.status === 'Công nợ';
+                    const isUnpaid = this.getOrderRemainingBalance(order) > 0;
 
                     console.log(`🔍 Order ${order.id}: matchById=${matchById}, matchByName=${matchByName}, isUnpaid=${isUnpaid}`);
 
@@ -7236,6 +7800,7 @@ window._supabaseData = null
                 });
 
                 console.log('🔍 DEBUG - Unpaid orders found:', unpaidOrders);
+                const actualCustomerDebt = unpaidOrders.reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0);
 
                 const customerPaymentHistory = customer.paymentHistory || [];
                 const customerPaymentHistoryHTML = customerPaymentHistory.length > 0 ? customerPaymentHistory.map((payment, idx) => `
@@ -7261,9 +7826,9 @@ window._supabaseData = null
                 const unpaidOrdersHTML = unpaidOrders.length > 0 ? 
                     unpaidOrders.map((order, idx) => {
                         const orderIndex = this.demoData.orders.findIndex(o => o.id === order.id);
-                        const remainingBalance = order.remainingBalance || order.total;
-                        const paidAmount = order.paidAmount || 0;
-                        const paymentPercentage = ((paidAmount / order.total) * 100).toFixed(0);
+                        const remainingBalance = this.getOrderRemainingBalance(order);
+                        const paidAmount = this.getOrderPaidAmount(order);
+                        const paymentPercentage = order.total > 0 ? Math.min((paidAmount / order.total) * 100, 100).toFixed(0) : '0';
                         return `
                         <tr style="border-bottom: 1px solid #e5e7eb;">
                             <td style="padding: 12px; text-align: left;">${order.id}</td>
@@ -7357,7 +7922,7 @@ window._supabaseData = null
                                     </div>
                                     <div>
                                         <div style="color: #6b7280; font-size: 14px; margin-bottom: 4px;">Tổng công nợ:</div>
-                                        <div style="font-weight: 700; color: #dc2626; font-size: 18px;">${customer.debt.toLocaleString('vi-VN')} VNĐ</div>
+                                        <div style="font-weight: 700; color: #dc2626; font-size: 18px;">${actualCustomerDebt.toLocaleString('vi-VN')} VNĐ</div>
                                     </div>
                                 </div>
                                 <div style="margin-top: 16px;">
@@ -7455,12 +8020,23 @@ window._supabaseData = null
                     // ĐỒNG BỘ 2 CHIỀU: Cập nhật tất cả đơn hàng chưa thanh toán của khách hàng này
                     const unpaidOrders = this.demoData.orders.filter(order => 
                         order.customerId === customerId && 
-                        (order.paymentStatus === 'Công nợ')
+                        (order.paymentStatus === 'Công nợ' || order.paymentStatus === 'Thanh toán một phần')
                     );
 
                     let updatedOrdersCount = 0;
                     unpaidOrders.forEach(order => {
+                        const remainingBalance = this.getOrderRemainingBalance(order);
+                        if (remainingBalance > 0) {
+                            this.recordOrderPayment(order, customer, remainingBalance, {
+                                id: `PAY_CUSTOMER_${customerId}_${order.id}_${Date.now()}`,
+                                date: this.getVietnamTime().toISOString().split('T')[0],
+                                method: order.paymentMethod || 'Tiền mặt',
+                                notes: 'Thanh toán toàn bộ công nợ khách hàng',
+                                remainingDebt: 0
+                            });
+                        }
                         order.paymentStatus = 'Đã thanh toán';
+                        this.syncOrderPaymentTotals(order);
                         updatedOrdersCount++;
                         console.log(`🔄 Đồng bộ: Đơn hàng ${order.id} → Đã thanh toán`);
                     });
@@ -9005,7 +9581,10 @@ window._supabaseData = null
                     total: finalTotal,
                     status: 'Chờ giao',
                     paymentMethod: formData.get('paymentMethod'),
-                    paymentStatus: paymentStatus
+                    paymentStatus: paymentStatus,
+                    paymentHistory: [],
+                    paidAmount: 0,
+                    remainingBalance: paymentStatus === 'Đã thanh toán' ? 0 : finalTotal
                 };
 
                 // Kiểm tra cảnh báo tồn kho nếu hàng sắp hết, nhưng không trừ tồn kho cho đến khi giao hàng
@@ -9029,6 +9608,15 @@ window._supabaseData = null
                 if (paymentStatus === 'Công nợ') {
                     customer.debt += newOrder.total;
                     console.log(`Cập nhật công nợ khách hàng ${customer.name}: +${newOrder.total.toLocaleString('vi-VN')} VNĐ (${paymentStatus})`);
+                } else if (paymentStatus === 'Đã thanh toán') {
+                    this.recordOrderPayment(newOrder, customer, newOrder.total, {
+                        id: `PAY_ORDER_${newOrder.id}_${Date.now()}`,
+                        date: newOrder.date,
+                        method: newOrder.paymentMethod,
+                        notes: 'Thanh toán ngay khi tạo đơn hàng',
+                        timestamp: newOrder.time,
+                        remainingDebt: Number(customer.debt) || 0
+                    });
                 }
 
                 this.saveToLocalStorage();
@@ -9042,6 +9630,11 @@ window._supabaseData = null
                     this.addActivityLog('info', '📦', `Đặt hàng`, 
                         `Sản phẩm: ${orderProduct.name} - Số lượng: ${orderProduct.quantity}`, 'order');
                 });
+
+                if (paymentStatus === 'Đã thanh toán') {
+                    this.addActivityLog('success', '💳', `Thanh toán đơn hàng ${newOrder.id}`,
+                        `Khách hàng: ${customer.name} - Đã thu: ${newOrder.total.toLocaleString('vi-VN')} VNĐ - ${newOrder.paymentMethod}`, 'payment');
+                }
 
                 // Hiển thị thông báo thành công
                 let successMessage = `Đã tạo đơn hàng ${newOrder.id}`;
@@ -9201,14 +9794,18 @@ window._supabaseData = null
 
                 const productRows = order.products.map((p, i) => `
                     <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;" data-product-row="${i}">
-                        <select name="productId_${i}" style="flex: 2; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;">
+                        <select name="productId_${i}" style="flex: 2; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" onchange="app.updateProductPriceInEdit(this, ${i})">
                             ${this.demoData.products.map(prod => 
-                                `<option value="${prod.id}" ${prod.id === p.id ? 'selected' : ''}>${prod.name}</option>`
+                                `<option value="${prod.id}" data-price="${prod.price}" ${prod.id === p.id ? 'selected' : ''}>${prod.name}</option>`
                             ).join('')}
                         </select>
                         <input type="number" name="price_${i}" value="${p.price}" min="0" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="Giá bán">
                         <input type="number" name="quantity_${i}" value="${p.quantity}" min="1" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="SL">
-                        <input type="number" name="discount_${i}" value="${p.discount || 0}" min="0" max="100" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="CK%">
+                        <input type="number" name="discount_${i}" value="${p.discount || 0}" min="0" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="CK">
+                        <select name="discountType[]" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;">
+                            <option value="percent" ${p.discountType !== 'amount' ? 'selected' : ''}>%</option>
+                            <option value="amount" ${p.discountType === 'amount' ? 'selected' : ''}>VNĐ</option>
+                        </select>
                         <button type="button" onclick="this.parentElement.remove()" style="padding: 8px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑️</button>
                     </div>
                 `).join('');
@@ -9227,11 +9824,12 @@ window._supabaseData = null
 
                                 <div style="margin-bottom: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Sản phẩm:</label>
-                                    <div style="margin-bottom: 8px; font-size: 12px; color: #666; display: flex; gap: 8px;">
+                                    <div style="margin-bottom: 8px; font-size: 12px; color: #666; display: flex; gap: 8px; align-items: center;">
                                         <span style="flex: 2;">Tên sản phẩm</span>
                                         <span style="flex: 1;">Giá bán</span>
                                         <span style="flex: 1;">Số lượng</span>
-                                        <span style="flex: 1;">Chiết khấu (%)</span>
+                                        <span style="flex: 1;">Chiết khấu</span>
+                                        <span style="flex: 1;">Loại</span>
                                         <span style="width: 40px;">Xóa</span>
                                     </div>
                                     <div id="products-container">
@@ -9308,7 +9906,11 @@ window._supabaseData = null
                         </select>
                         <input type="number" name="price_${rowCount}" value="${firstProduct ? firstProduct.price : 0}" min="0" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="Giá bán">
                         <input type="number" name="quantity_${rowCount}" value="1" min="1" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="SL">
-                        <input type="number" name="discount_${rowCount}" value="0" min="0" max="100" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="CK%">
+                        <input type="number" name="discount_${rowCount}" value="0" min="0" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;" placeholder="CK">
+                        <select name="discountType[]" style="flex: 1; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px;">
+                            <option value="percent" selected>%</option>
+                            <option value="amount">VNĐ</option>
+                        </select>
                         <button type="button" onclick="this.parentElement.remove()" style="padding: 8px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer;">🗑️</button>
                     </div>
                 `;
@@ -9347,6 +9949,7 @@ window._supabaseData = null
 
                 // Lấy thông tin sản phẩm mới
                 const products = [];
+                const discountTypes = formData.getAll('discountType[]');
                 const productElements = form.querySelectorAll('[data-product-row]');
 
                 productElements.forEach((row, i) => {
@@ -9354,16 +9957,20 @@ window._supabaseData = null
                     const price = parseInt(formData.get(`price_${i}`)) || 0;
                     const quantity = parseInt(formData.get(`quantity_${i}`)) || 1;
                     const discount = parseInt(formData.get(`discount_${i}`)) || 0;
+                    const discountType = discountTypes[i] || 'percent';
 
                     if (productId) {
                         const product = this.demoData.products.find(p => p.id === productId);
                         if (product) {
+                            const existingProduct = order.products.find(p => p.id === productId);
                             products.push({
                                 id: productId,
                                 name: product.name,
                                 quantity: quantity,
                                 price: price, // Sử dụng giá đã chỉnh sửa từ form
-                                discount: discount
+                                discount: discount,
+                                discountType: discountType,
+                                deliveredQty: existingProduct?.deliveredQty || 0
                             });
                         }
                     }
@@ -9377,7 +9984,12 @@ window._supabaseData = null
                 // Tính tổng tiền mới
                 const newTotal = products.reduce((sum, product) => {
                     const beforeDiscount = product.quantity * product.price;
-                    const discountAmount = beforeDiscount * product.discount / 100;
+                    let discountAmount = 0;
+                    if (product.discountType === 'amount') {
+                        discountAmount = product.discount;
+                    } else {
+                        discountAmount = beforeDiscount * product.discount / 100;
+                    }
                     return sum + (beforeDiscount - discountAmount);
                 }, 0);
                 
@@ -9401,8 +10013,8 @@ window._supabaseData = null
 
                 // Cập nhật debt của khách hàng mới nếu cần
                 if (newPaymentStatus === 'Công nợ') {
-                    newCustomer.debt += newTotal;
-                    console.log(`Thêm debt cho ${newCustomer.name}: +${newTotal.toLocaleString('vi-VN')} VNĐ (${newPaymentStatus})`);
+                    newCustomer.debt += finalTotal;
+                    console.log(`Thêm debt cho ${newCustomer.name}: +${finalTotal.toLocaleString('vi-VN')} VNĐ (${newPaymentStatus})`);
                 }
 
                 this.saveToLocalStorage();
@@ -9588,6 +10200,8 @@ window._supabaseData = null
                     if (order.paymentHistory) {
                         order.paymentHistory = [];
                     }
+                    order.paidAmount = 0;
+                    order.remainingBalance = order.total;
 
                     // Xóa lịch sử thanh toán của khách hàng liên quan đến đơn hàng này
                     if (customer.paymentHistory) {
@@ -9595,40 +10209,24 @@ window._supabaseData = null
                             !payment.ordersAffected || !payment.ordersAffected.some(o => o.orderId === order.id)
                         );
                     }
-                } else if (oldPaymentStatus === 'Công nợ' && newPaymentStatus === 'Đã thanh toán') {
+                } else if (oldPaymentStatus !== 'Đã thanh toán' && newPaymentStatus === 'Đã thanh toán') {
                     // Từ "Công nợ" → "Đã thanh toán": trừ debt
-                    customer.debt -= order.total;
+                    const remainingBeforePayment = this.getOrderRemainingBalance(order);
+                    customer.debt -= remainingBeforePayment;
                     if (customer.debt < 0) customer.debt = 0; // Đảm bảo debt không âm
-                    console.log(`Toggle: Trừ debt cho ${customer.name}: -${order.total.toLocaleString('vi-VN')} VNĐ`);
+                    console.log(`Toggle: Trừ debt cho ${customer.name}: -${remainingBeforePayment.toLocaleString('vi-VN')} VNĐ`);
 
-                    // Ghi nhận thanh toán
-                    if (!order.paymentHistory) order.paymentHistory = [];
-                    const paymentReceipt = {
-                        id: 'PAY_TOGGLE_' + Date.now(),
-                        date: this.getVietnamTime().toISOString().split('T')[0],
-                        amount: order.total,
-                        method: paymentMethod,
-                        notes: 'Thanh toán tự động khi chuyển trạng thái từ Công nợ sang Đã thanh toán'
-                    };
-                    order.paymentHistory.push(paymentReceipt);
-
-                    // Ghi nhận vào lịch sử thanh toán của khách hàng
-                    if (!customer.paymentHistory) customer.paymentHistory = [];
-                    const paymentHistory = {
-                        id: paymentReceipt.id,
-                        date: paymentReceipt.date,
-                        amount: order.total,
-                        method: paymentMethod,
-                        notes: paymentReceipt.notes,
-                        timestamp: this.formatTimeNow(),
-                        ordersAffected: [{
-                            orderId: order.id,
-                            amount: order.total,
-                            remainingBalance: 0
-                        }],
-                        remainingDebt: customer.debt
-                    };
-                    customer.paymentHistory.push(paymentHistory);
+                    if (remainingBeforePayment > 0) {
+                        this.recordOrderPayment(order, customer, remainingBeforePayment, {
+                            id: 'PAY_TOGGLE_' + Date.now(),
+                            date: this.getVietnamTime().toISOString().split('T')[0],
+                            method: paymentMethod,
+                            notes: 'Thanh toán tự động khi chuyển trạng thái từ Công nợ sang Đã thanh toán',
+                            remainingDebt: customer.debt
+                        });
+                    } else {
+                        this.syncOrderPaymentTotals(order);
+                    }
                 }
 
                 this.saveToLocalStorage();
@@ -9856,12 +10454,16 @@ window._supabaseData = null
 
             showTrendAnalysis(timePeriod = 'monthly') {
                 // Tính toán dữ liệu phân tích
-                const totalRevenue = this.demoData.orders.reduce((sum, order) => sum + order.total, 0);
+                const totalRevenue = this.getOrderRevenueInRange(null, null);
                 const avgOrderValue = this.demoData.orders.length > 0 ? totalRevenue / this.demoData.orders.length : 0;
-                const totalDebt = this.demoData.customers.reduce((sum, c) => sum + c.debt, 0);
+                const totalDebt = this.getTotalOutstandingDebt();
                 const paidOrders = this.demoData.orders.filter(order => order.paymentStatus === 'Đã thanh toán').length;
-                const unpaidOrders = this.demoData.orders.filter(order => order.paymentStatus === 'Công nợ').length;
+                const unpaidOrders = this.demoData.orders.filter(order => this.getOrderRemainingBalance(order) > 0).length;
                 const completedOrders = this.demoData.orders.filter(order => order.status === 'Hoàn thành').length;
+                const totalOperatingExpenses = (this.demoData.expenses || []).reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+                const expenseBreakdown = Object.entries(this.getExpenseBreakdown(this.demoData.expenses || []))
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 6);
 
                 const revenueData = this.calculateRevenueByPeriod(timePeriod);
                 const periodTitles = {
@@ -9939,6 +10541,10 @@ window._supabaseData = null
                                 <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; padding: 20px; border-radius: 12px; text-align: center;">
                                     <div style="font-size: 32px; font-weight: bold; margin-bottom: 8px;">${this.demoData.customers.length}</div>
                                     <div style="font-size: 14px; opacity: 0.9;">Khách Hàng</div>
+                                </div>
+                                <div style="background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); color: white; padding: 20px; border-radius: 12px; text-align: center;">
+                                    <div style="font-size: 32px; font-weight: bold; margin-bottom: 8px;">${totalOperatingExpenses.toLocaleString('vi-VN')}</div>
+                                    <div style="font-size: 14px; opacity: 0.9;">Chi phí vận hành (VNĐ)</div>
                                 </div>
                             </div>
 
@@ -10060,6 +10666,24 @@ window._supabaseData = null
                                 </div>
                             </div>
 
+                            <div style="background: #fff7ed; padding: 24px; border-radius: 12px; border: 1px solid #fed7aa; margin-bottom: 32px;">
+                                <h3 style="color: #9a3412; margin: 0 0 16px 0;">Phân tích loại chi phí</h3>
+                                ${expenseBreakdown.length > 0 ? expenseBreakdown.map(([category, amount]) => {
+                                    const percent = totalOperatingExpenses > 0 ? (amount / totalOperatingExpenses * 100).toFixed(1) : '0.0';
+                                    return `
+                                        <div style="margin-bottom: 12px;">
+                                            <div style="display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px;">
+                                                <span style="font-weight: 600; color: #7c2d12;">${category}</span>
+                                                <span style="font-weight: 700; color: #dc2626;">${amount.toLocaleString('vi-VN')} VNĐ</span>
+                                            </div>
+                                            <div style="height: 8px; background: #ffedd5; border-radius: 4px; overflow: hidden;">
+                                                <div style="height: 100%; width: ${percent}%; background: #f97316;"></div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('') : '<div style="color: #9a3412;">Chưa có chi phí vận hành để phân tích.</div>'}
+                            </div>
+
                             <!-- Analysis Summary -->
                             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 32px;">
                                 <div style="background: #f0fdf4; padding: 20px; border-radius: 12px; border: 1px solid #bbf7d0;">
@@ -10135,9 +10759,7 @@ window._supabaseData = null
                         end.setHours(23, 59, 59, 999);
 
                         const dayOrders = getOrdersForDate(start, end);
-                        const revenue = dayOrders
-                            .filter(order => order.paymentStatus === 'Đã thanh toán')
-                            .reduce((sum, order) => sum + order.total, 0);
+                        const revenue = dayOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
 
                         results.push({
                             label: date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }),
@@ -10160,9 +10782,7 @@ window._supabaseData = null
                         end.setHours(23, 59, 59, 999);
 
                         const weekOrders = getOrdersForDate(start, end);
-                        const revenue = weekOrders
-                            .filter(order => order.paymentStatus === 'Đã thanh toán')
-                            .reduce((sum, order) => sum + order.total, 0);
+                        const revenue = weekOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
 
                         results.push({
                             label: `Tuần ${start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`,
@@ -10177,9 +10797,7 @@ window._supabaseData = null
                         const end = new Date(year, 11, 31, 23, 59, 59, 999);
 
                         const yearOrders = getOrdersForDate(start, end);
-                        const revenue = yearOrders
-                            .filter(order => order.paymentStatus === 'Đã thanh toán')
-                            .reduce((sum, order) => sum + order.total, 0);
+                        const revenue = yearOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
 
                         results.push({
                             label: `${year}`,
@@ -10196,9 +10814,7 @@ window._supabaseData = null
                         const end = new Date(year, month, 0, 23, 59, 59, 999);
 
                         const monthOrders = getOrdersForDate(start, end);
-                        const revenue = monthOrders
-                            .filter(order => order.paymentStatus === 'Đã thanh toán')
-                            .reduce((sum, order) => sum + order.total, 0);
+                        const revenue = monthOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
 
                         results.push({
                             label: `T${month}/${year}`,
@@ -10611,6 +11227,8 @@ window._supabaseData = null
 
                     // Format date
                     const orderDate = order.date ? order.date.split('-').reverse().join('-') : '';
+                    const shippingFee = Number(order.shippingFee) || 0;
+                    const finalTotal = Number(order.total) || (totalBeforeDiscount - totalDiscountAmount + shippingFee);
 
                     // Customer address parts
                     const addressParts = [customer.address, customer.ward, customer.district, customer.province].filter(Boolean);
@@ -10897,6 +11515,8 @@ window._supabaseData = null
                                         <div><span class="label">Email:</span> <span class="value">${customer.email || ''}</span></div>
                                     </div>
                                     ${fullAddress ? `<div class="customer-address">${fullAddress}</div>` : ''}
+                                    ${order.deliveryMethod ? `<div class="customer-row"><span class="label">Hình thức giao:</span> <span class="value">${order.deliveryMethod}</span></div>` : ''}
+                                    ${order.deliveryNotes ? `<div class="customer-row"><span class="label">Ghi chú giao hàng:</span> <span class="value">${order.deliveryNotes}</span></div>` : ''}
                                 </div>
 
                                 <!-- PRODUCT TABLE -->
@@ -10945,11 +11565,11 @@ window._supabaseData = null
                                         </div>
                                         <div class="summary-row">
                                             <span class="label">Phí giao hàng</span>
-                                            <span class="value">${(order.shippingFee || 0).toLocaleString('vi-VN')}</span>
+                                            <span class="value">${shippingFee.toLocaleString('vi-VN')}</span>
                                         </div>
                                         <div class="summary-row final">
                                             <span class="label">Khách phải trả</span>
-                                            <span class="value">${order.total.toLocaleString('vi-VN')}</span>
+                                            <span class="value">${finalTotal.toLocaleString('vi-VN')}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -11060,7 +11680,16 @@ window._supabaseData = null
             updateVATPreview(vatPercent, orderIndex) {
                 const order = this.demoData.orders[orderIndex];
                 const vatRate = parseFloat(vatPercent) || 0;
-                const subtotal = order.total;
+                const shippingFee = Number(order.shippingFee) || 0;
+                const subtotal = (order.products || []).reduce((sum, item) => {
+                    const qty = Number(item.quantity) || 0;
+                    const price = Number(item.price) || 0;
+                    const discount = Number(item.discount) || 0;
+                    const discountType = item.discountType || 'percent';
+                    const beforeDiscount = qty * price;
+                    const discountAmount = discountType === 'amount' ? discount : beforeDiscount * discount / 100;
+                    return sum + (beforeDiscount - discountAmount);
+                }, 0) + shippingFee;
                 const vatAmount = (subtotal * vatRate) / 100;
                 const totalWithVAT = subtotal + vatAmount;
 
@@ -11115,6 +11744,20 @@ window._supabaseData = null
                         address: order.customerAddress || 'Không có' 
                     };
 
+                    const shippingFee = Number(order.shippingFee) || 0;
+                    const productTotal = (order.products || []).reduce((sum, item) => {
+                        const qty = Number(item.quantity) || 0;
+                        const price = Number(item.price) || 0;
+                        const discount = Number(item.discount) || 0;
+                        const discountType = item.discountType || 'percent';
+                        const beforeDiscount = qty * price;
+                        const discountAmount = discountType === 'amount' ? discount : beforeDiscount * discount / 100;
+                        return sum + (beforeDiscount - discountAmount);
+                    }, 0);
+                    const subtotal = productTotal + shippingFee;
+                    const vatAmount = (subtotal * vatRate) / 100;
+                    const totalWithVAT = subtotal + vatAmount;
+
                     // HOSTING SOLUTION: Get company settings + global assets
                     const companySettings = this.getCompanySettings();
 
@@ -11129,13 +11772,6 @@ window._supabaseData = null
                     console.log('✅ HOSTING READY - Logo/QR from global assets');
                     console.log('Logo data:', companySettings.logo ? 'Found' : 'Not found');
                     console.log('QR data:', companySettings.qrCode ? 'Found' : 'Not found');
-
-                    // Calculate VAT amounts
-                    const shippingFee = order.shippingFee || 0;
-                    const productTotal = order.total - shippingFee;
-                    const subtotal = order.total;
-                    const vatAmount = (subtotal * vatRate) / 100;
-                    const totalWithVAT = subtotal + vatAmount;
 
                     // Close the VAT popup
                     const popup = document.querySelector('div[style*="fixed"]');
@@ -11412,6 +12048,8 @@ window._supabaseData = null
                                                 ${order.paymentStatus}
                                             </span>
                                         </div>
+                                        ${order.deliveryMethod ? `<div class="info-row"><span class="info-label">Hình thức giao:</span><span class="info-value">${order.deliveryMethod}</span></div>` : ''}
+                                        ${order.deliveryNotes ? `<div class="info-row"><span class="info-label">Ghi chú giao hàng:</span><span class="info-value">${order.deliveryNotes}</span></div>` : ''}
                                     </div>
                                 </div>
 
@@ -11526,8 +12164,7 @@ window._supabaseData = null
                     const unpaidOrders = this.demoData.orders.filter(order => {
                         const matchById = order.customerId === customerId;
                         const matchByName = order.customer === customer.name || order.customerName === customer.name;
-                        const isUnpaid = order.paymentStatus === 'Công nợ' ||
-                                        order.status === 'Công nợ';
+                        const isUnpaid = this.getOrderRemainingBalance(order) > 0;
                         return (matchById || matchByName) && isUnpaid;
                     });
 
@@ -11537,7 +12174,7 @@ window._supabaseData = null
                     }
 
                     // Calculate total debt
-                    const totalDebt = unpaidOrders.reduce((sum, order) => sum + order.total, 0);
+                    const totalDebt = unpaidOrders.reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0);
 
                     // Generate debt report window
                     const reportWindow = window.open('', '_blank');
@@ -11849,7 +12486,7 @@ window._supabaseData = null
                                                         ${order.paymentStatus}
                                                     </span>
                                                 </td>
-                                                <td class="amount">${order.total.toLocaleString('vi-VN')} đ</td>
+                                                <td class="amount">${this.getOrderRemainingBalance(order).toLocaleString('vi-VN')} đ</td>
                                             </tr>
                                         `).join('')}
                                     </tbody>
@@ -12088,30 +12725,21 @@ window._supabaseData = null
                     return orderDate >= startDate && orderDate <= endDate;
                 });
 
-                // Tính toán lại các số liệu thống kê
-                const totalRevenue = filteredOrders.reduce((sum, order) => {
-                    return sum + order.total; // Tính cho tất cả đơn hàng theo yêu cầu
-                }, 0);
-
+                const periodExpenses = this.getExpensesInRange(fromDate, toDate);
+                const operatingExpenses = periodExpenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+                const orderRevenue = filteredOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
                 const totalCostAndExpense = filteredOrders.reduce((sum, order) => {
-                    let orderCost = 0;
-                    order.products.forEach(p => {
-                        const productDetails = this.demoData.products.find(prod => prod.id === p.id);
-                        const importPrice = productDetails ? (productDetails.importPrice || 0) : 0;
-                        orderCost += importPrice * p.quantity;
-                    });
-                    const expense = order.expense || 0;
-                    return sum + orderCost + expense;
-                }, 0);
+                    return sum + this.getOrderCost(order) + (Number(order.expense) || 0);
+                }, 0) + operatingExpenses;
 
-                const totalProfit = totalRevenue - totalCostAndExpense;
+                const totalProfit = orderRevenue - totalCostAndExpense;
 
                 const totalDebt = filteredOrders.reduce((sum, order) => {
-                    return order.paymentStatus === 'Công nợ' ? sum + order.total : sum;
+                    return order.paymentStatus !== 'Đã thanh toán' ? sum + this.getOrderRemainingBalance(order) : sum;
                 }, 0);
 
                 // Cập nhật display thống kê
-                this.updateFilteredStats(totalRevenue, totalProfit, totalDebt, filteredOrders.length, totalCostAndExpense);
+                this.updateFilteredStats(orderRevenue, totalProfit, totalDebt, filteredOrders.length, totalCostAndExpense);
 
                 // Cập nhật danh sách đơn hàng hiển thị
                 this.updateOrdersList(filteredOrders);
@@ -12138,7 +12766,7 @@ window._supabaseData = null
                 const activityDesc = document.querySelector('.activity-desc');
                 if (activityDesc) {
                     const profitMargin = revenue > 0 ? ((profit / revenue) * 100).toFixed(1) : 0;
-                    activityDesc.textContent = `Doanh thu: ${revenue.toLocaleString('vi-VN')} VNĐ - ${orderCount} đơn hàng - Lợi nhuận: ${profitMargin}% - Tổng chi phí: ${totalCost.toLocaleString('vi-VN')} VNĐ`;
+                    activityDesc.textContent = `Doanh thu phát sinh: ${revenue.toLocaleString('vi-VN')} VNĐ - ${orderCount} đơn hàng - Lợi nhuận: ${profitMargin}% - Tổng chi phí: ${totalCost.toLocaleString('vi-VN')} VNĐ`;
                 }
             }
 
@@ -12567,9 +13195,22 @@ window._supabaseData = null
                 });
 
                 // Tính toán các chỉ số tài chính
-                const totalRevenue = filteredOrders.filter(order => order.paymentStatus === 'Đã thanh toán').reduce((sum, order) => sum + order.total, 0);
-                const totalDebt = this.demoData.customers.reduce((sum, customer) => sum + customer.debt, 0);
+                const grossRevenue = filteredOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+                const actualCollected = this.getCollectedAmountInRange(fromDate, toDate);
+                const costOfGoods = filteredOrders.reduce((sum, order) => sum + this.getOrderCost(order), 0);
+                const orderExtraExpenses = filteredOrders.reduce((sum, order) => sum + (Number(order.expense) || 0), 0);
+                const operatingExpenses = this.getExpensesInRange(fromDate, toDate);
+                const operatingExpenseTotal = operatingExpenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+                const totalExpenses = costOfGoods + orderExtraExpenses + operatingExpenseTotal;
+                const netProfit = grossRevenue - totalExpenses;
+                const totalDebt = this.getTotalOutstandingDebt(this.demoData.orders || []);
                 const totalInventoryValue = this.demoData.products.reduce((sum, p) => sum + (p.price * p.stock), 0);
+                const expenseBreakdownRows = Object.entries(this.getExpenseBreakdown(operatingExpenses))
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([category, amount]) => ({
+                        category: `- ${category}`,
+                        value: amount.toLocaleString('vi-VN') + ' VNĐ'
+                    }));
 
                 const financialData = [
                     { category: 'BÁO CÁO TÀI CHÍNH TỔNG QUAN', value: '' },
@@ -12577,10 +13218,22 @@ window._supabaseData = null
                     { category: 'Ngày báo cáo', value: this.getVietnamTime().toLocaleDateString('vi-VN') },
                     { category: '', value: '' },
                     { category: 'DOANH THU VÀ BÁN HÀNG', value: '' },
-                    { category: 'Tổng doanh thu', value: totalRevenue.toLocaleString('vi-VN') + ' VNĐ' },
+                    { category: 'Doanh thu ghi nhận từ đơn hàng', value: grossRevenue.toLocaleString('vi-VN') + ' VNĐ' },
+                    { category: 'Tiền đã thu thực tế', value: actualCollected.toLocaleString('vi-VN') + ' VNĐ' },
                     { category: 'Số đơn hàng', value: filteredOrders.length.toString() },
                     { category: 'Đơn hoàn thành', value: filteredOrders.filter(o => o.status === 'Hoàn thành').length.toString() },
                     { category: 'Đơn đã thanh toán', value: filteredOrders.filter(o => o.paymentStatus === 'Đã thanh toán').length.toString() },
+                    { category: '', value: '' },
+                    { category: 'CHI PHÍ VÀ LỢI NHUẬN', value: '' },
+                    { category: 'Giá vốn hàng bán', value: costOfGoods.toLocaleString('vi-VN') + ' VNĐ' },
+                    { category: 'Chi phí phát sinh theo đơn', value: orderExtraExpenses.toLocaleString('vi-VN') + ' VNĐ' },
+                    { category: 'Chi phí vận hành', value: operatingExpenseTotal.toLocaleString('vi-VN') + ' VNĐ' },
+                    { category: 'Tổng chi phí', value: totalExpenses.toLocaleString('vi-VN') + ' VNĐ' },
+                    { category: 'Lợi nhuận thuần theo doanh thu phát sinh', value: netProfit.toLocaleString('vi-VN') + ' VNĐ' },
+                    { category: '', value: '' },
+                    { category: 'PHÂN TÍCH LOẠI CHI PHÍ', value: '' },
+                    ...expenseBreakdownRows,
+                    ...(expenseBreakdownRows.length === 0 ? [{ category: 'Chưa có chi phí vận hành', value: '0 VNĐ' }] : []),
                     { category: '', value: '' },
                     { category: 'KHÁCH HÀNG VÀ CÔNG NỢ', value: '' },
                     { category: 'Tổng khách hàng', value: this.demoData.customers.length.toString() },
@@ -12780,7 +13433,14 @@ window._supabaseData = null
 
             // Hiển thị popup export báo cáo công nợ với bộ lọc
             showDebtExportWithFilter() {
-                const customersWithDebt = this.demoData.customers.filter(c => c.debt > 0);
+                const customersWithDebt = this.demoData.customers
+                    .map(customer => ({
+                        ...customer,
+                        debt: (this.demoData.orders || [])
+                            .filter(order => order.customerId === customer.id || order.customerName === customer.name)
+                            .reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0)
+                    }))
+                    .filter(c => c.debt > 0);
                 if (customersWithDebt.length === 0) {
                     this.showNotification('Không có khách hàng nào đang nợ', 'info');
                     return;
@@ -12857,8 +13517,15 @@ window._supabaseData = null
                 const debtFilter = document.getElementById('debtFilter').value;
                 const customerTypeFilter = document.getElementById('customerTypeFilter').value;
 
-                // Lọc khách hàng có nợ
-                let customersWithDebt = this.demoData.customers.filter(c => c.debt > 0);
+                // Lọc khách hàng có nợ thực tế sau khi trừ các khoản đã thanh toán từng phần
+                let customersWithDebt = this.demoData.customers
+                    .map(customer => ({
+                        ...customer,
+                        debt: (this.demoData.orders || [])
+                            .filter(order => order.customerId === customer.id || order.customerName === customer.name)
+                            .reduce((sum, order) => sum + this.getOrderRemainingBalance(order), 0)
+                    }))
+                    .filter(c => c.debt > 0);
 
                 // Lọc theo mức nợ
                 if (debtFilter === 'low') {
@@ -13114,7 +13781,30 @@ window._supabaseData = null
         // Logout functionality
         async function logout() {
             if (confirm('Bạn có chắc chắn muốn đăng xuất?')) {
-                await supabase.auth.signOut();
+                if (app?.demoData) {
+                    try {
+                        console.log('Flushing local data before logout...');
+                        app.saveToLocalStorage?.();
+                        if (window._supabaseDataLoaded) {
+                            const synced = await syncAllDataToSupabaseImmediate(app.demoData);
+                            if (!synced) {
+                                showNotification('Không thể đồng bộ dữ liệu lên cloud. Vui lòng thử đăng xuất lại sau.', 'error');
+                                return;
+                            }
+                        }
+                    } catch (syncError) {
+                        console.error('Failed to sync data before logout:', syncError);
+                        showNotification('Không thể đồng bộ dữ liệu trước khi đăng xuất. Vui lòng thử lại.', 'error');
+                        return;
+                    }
+                }
+
+                const { error: signOutError } = await supabase.auth.signOut();
+                if (signOutError) {
+                    console.error('Supabase logout failed', signOutError);
+                    showNotification('Lỗi đăng xuất: ' + signOutError.message, 'error');
+                    return;
+                }
                 // Clear Supabase data cache
                 window._supabaseDataLoaded = false;
                 window._supabaseData = null;

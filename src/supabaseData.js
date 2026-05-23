@@ -252,7 +252,9 @@ export async function addOrder(order, items) {
         const orderItems = items.map(item => ({
             ...item,
             order_id: orderData.id,
-            delivered_qty: item.deliveredQty || 0
+            delivered_qty: item.deliveredQty || 0,
+            discount: item.discount || 0,
+            discount_type: item.discountType || 'percent'
         }))
         const { error: itemsError } = await supabase
             .from('order_items')
@@ -281,6 +283,66 @@ export async function deleteOrder(id) {
         .delete()
         .eq('id', id)
     if (error) { console.error('deleteOrder error:', error); throw error }
+    return true
+}
+
+// ==================== DELIVERIES ====================
+
+export async function getDeliveries() {
+    const { data, error } = await supabase
+        .from('deliveries')
+        .select('*')
+        .order('delivery_date', { ascending: false })
+    if (error) { console.error('getDeliveries error:', error); return [] }
+    return data
+}
+
+export async function getDeliveriesByOrderCode(orderCode) {
+    const { data, error } = await supabase
+        .from('deliveries')
+        .select('*')
+        .eq('order_code', orderCode)
+        .order('delivery_date', { ascending: false })
+    if (error) { console.error('getDeliveriesByOrderCode error:', error); return [] }
+    return data
+}
+
+export async function addDelivery(delivery) {
+    const { data, error } = await supabase
+        .from('deliveries')
+        .insert([delivery])
+        .select()
+        .single()
+    if (error) { console.error('addDelivery error:', error); throw error }
+    return data
+}
+
+export async function addDeliveries(deliveries) {
+    const { data, error } = await supabase
+        .from('deliveries')
+        .insert(deliveries)
+        .select()
+    if (error) { console.error('addDeliveries error:', error); throw error }
+    return data
+}
+
+export async function updateDelivery(id, updates) {
+    const { data, error } = await supabase
+        .from('deliveries')
+        .update(updates)
+        .eq('id', id)
+        .select()
+        .single()
+    if (error) { console.error('updateDelivery error:', error); throw error }
+    return data
+}
+
+export async function deleteDelivery(id) {
+    const { error } = await supabase
+        .from('deliveries')
+        .delete()
+        .eq('id', id)
+    if (error) { console.error('deleteDelivery error:', error); throw error }
     return true
 }
 
@@ -362,6 +424,26 @@ export async function addInventoryHistory(entry) {
     return data
 }
 
+// ==================== EXPENSES ====================
+
+export async function getExpenses() {
+    const { data, error } = await supabase
+        .from('expenses')
+        .select('*')
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+    if (error) {
+        if (isMissingExpensesTable(error)) {
+            _expensesTableAvailable = false
+            console.warn('⚠️ Supabase expenses table is missing. Run supabase_expenses_migration.sql to persist operating expenses.')
+        } else {
+            console.error('getExpenses error:', error)
+        }
+        return []
+    }
+    return data
+}
+
 // ==================== COMPANY SETTINGS ====================
 
 export async function getCompanySettings() {
@@ -399,14 +481,16 @@ export async function setCompanySetting(key, value) {
  * Trả về object tương thích với format demoData cũ
  */
 export async function loadAllData() {
-    const [customers, suppliers, products, categories, orders, purchases, inventoryHistory] = await Promise.all([
+    const [customers, suppliers, products, categories, orders, purchases, inventoryHistory, deliveries, expenses] = await Promise.all([
         getCustomers(),
         getSuppliers(),
         getProducts(),
         getCategories(),
         getOrders(),
         getPurchases(),
-        getInventoryHistory()
+        getInventoryHistory(),
+        getDeliveries(),
+        getExpenses()
     ])
 
     // Map Supabase data sang format cũ tương thích với VietnameseERP class
@@ -470,7 +554,9 @@ export async function loadAllData() {
             name: item.product_name,
             quantity: item.quantity,
             price: Number(item.price) || 0,
-            deliveredQty: Number(item.delivered_qty) || 0
+            deliveredQty: Number(item.delivered_qty) || 0,
+            discount: Number(item.discount) || 0,
+            discountType: item.discount_type || 'percent'
         })),
         total: Number(o.total) || 0,
         expense: Number(o.expense) || 0,
@@ -479,7 +565,10 @@ export async function loadAllData() {
         deliveryNotes: o.delivery_notes || '',
         status: o.status || 'Mới',
         paymentMethod: o.payment_method || 'Tiền mặt',
-        paymentStatus: o.payment_status || 'Chưa thanh toán'
+        paymentStatus: o.payment_status || 'Chưa thanh toán',
+        paymentHistory: Array.isArray(o.payment_history) ? o.payment_history : [],
+        paidAmount: Number(o.paid_amount) || 0,
+        remainingBalance: Number(o.remaining_balance) || 0
     }))
 
     const mappedPurchases = purchases.map(p => ({
@@ -523,6 +612,48 @@ export async function loadAllData() {
         }
     })
 
+    const mappedDeliveries = deliveries.map(d => ({
+        id: d.id,
+        orderCode: d.order_code || '',
+        productCode: d.product_code || '',
+        customerId: d.customer_id || '',
+        customerName: d.customer_name || '',
+        productName: d.product_name || '',
+        quantityOrdered: Number(d.quantity_ordered) || 0,
+        quantityDelivered: Number(d.quantity_delivered) || 0,
+        deliveryDate: d.delivery_date || '',
+        deliveryTime: d.delivery_time || '',
+        deliveryMethod: d.delivery_method || '',
+        deliveryNotes: d.delivery_notes || '',
+        status: d.status || 'pending',
+        createdAt: d.created_at || '',
+        updatedAt: d.updated_at || '',
+        createdBy: d.created_by || ''
+    }))
+
+    const mappedExpenses = expenses.map(e => ({
+        id: e.code || e.id,
+        _supabaseId: e.id,
+        date: e.date || '',
+        category: e.category || 'Khác',
+        amount: Number(e.amount) || 0,
+        paymentMethod: e.payment_method || 'Tiền mặt',
+        payee: e.payee || '',
+        notes: e.notes || '',
+        createdAt: e.created_at || ''
+    }))
+    const expenseCategories = Array.from(new Set([
+        'Lương',
+        'Thuê kho',
+        'Vận chuyển',
+        'Marketing',
+        'Điện nước',
+        'Văn phòng phẩm',
+        'Bảo trì',
+        'Khác',
+        ...mappedExpenses.map(e => e.category).filter(Boolean)
+    ]))
+
     return {
         customers: mappedCustomers,
         suppliers: mappedSuppliers,
@@ -530,9 +661,12 @@ export async function loadAllData() {
         categories: mappedCategories,
         orders: mappedOrders,
         purchases: mappedPurchases,
+        expenses: mappedExpenses,
+        expenseCategories,
         sales: [], // Sales được tính từ orders
         debts: [],
-        inventoryHistory: mappedInventoryHistory
+        inventoryHistory: mappedInventoryHistory,
+        deliveries: mappedDeliveries
     }
 }
 
@@ -541,6 +675,43 @@ export async function loadAllData() {
 // Debounce timer
 let _syncTimer = null
 let _isSyncing = false
+let _paymentTrackingColumnsAvailable = true
+let _expensesTableAvailable = true
+
+function getOrderPaymentTracking(order) {
+    const paymentHistory = Array.isArray(order.paymentHistory) ? order.paymentHistory.map(payment => ({
+        id: payment.id,
+        date: payment.date,
+        amount: Number(payment.amount) || 0,
+        method: payment.method || order.paymentMethod || 'Tiền mặt',
+        notes: payment.notes || '',
+        timestamp: payment.timestamp || ''
+    })) : []
+    const paidAmount = paymentHistory.length > 0
+        ? paymentHistory.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
+        : Number(order.paidAmount) || 0
+    const remainingBalance = Math.max((Number(order.total) || 0) - paidAmount, 0)
+
+    return {
+        paymentHistory,
+        paidAmount,
+        remainingBalance
+    }
+}
+
+function isMissingPaymentTrackingColumn(error) {
+    const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+    const mentionsPaymentColumn = 
+        message.includes('payment_history') ||
+        message.includes('paid_amount') ||
+        message.includes('remaining_balance')
+    return mentionsPaymentColumn && (error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column'))
+}
+
+function isMissingExpensesTable(error) {
+    const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+    return error?.code === '42P01' || error?.code === 'PGRST205' || (message.includes('expenses') && message.includes('schema cache'))
+}
 
 /**
  * Đồng bộ toàn bộ demoData từ VietnameseERP lên Supabase
@@ -564,13 +735,16 @@ export async function syncAllDataToSupabaseImmediate(demoData) {
         clearTimeout(_syncTimer)
         _syncTimer = null
     }
-    await _performSync(demoData)
+    while (_isSyncing) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    return await _performSync(demoData)
 }
 
 async function _performSync(demoData) {
     if (_isSyncing) {
         console.log('⏳ Sync already in progress, skipping...')
-        return
+        return false
     }
     _isSyncing = true
     console.log('☁️ Syncing data to Supabase...')
@@ -688,7 +862,8 @@ async function _performSync(demoData) {
                     customerId = custData?.id || null
                 }
 
-                const orderData = {
+                const paymentTracking = getOrderPaymentTracking(order)
+                const baseOrderData = {
                     code: order.id,
                     customer_id: customerId,
                     customer_name: order.customerName || null,
@@ -703,12 +878,30 @@ async function _performSync(demoData) {
                     payment_method: order.paymentMethod || 'Tiền mặt',
                     payment_status: order.paymentStatus || 'Chưa thanh toán'
                 }
+                const orderData = _paymentTrackingColumnsAvailable ? {
+                    ...baseOrderData,
+                    paid_amount: paymentTracking.paidAmount,
+                    remaining_balance: paymentTracking.remainingBalance,
+                    payment_history: paymentTracking.paymentHistory
+                } : baseOrderData
 
-                const { data: upsertedOrder, error: orderErr } = await supabase
+                let { data: upsertedOrder, error: orderErr } = await supabase
                     .from('orders')
                     .upsert(orderData, { onConflict: 'code' })
                     .select()
                     .single()
+
+                if (orderErr && _paymentTrackingColumnsAvailable && isMissingPaymentTrackingColumn(orderErr)) {
+                    _paymentTrackingColumnsAvailable = false
+                    console.warn('⚠️ Supabase orders table is missing payment tracking columns. Run supabase_payment_tracking_migration.sql to persist payment history.')
+                    const retryResult = await supabase
+                        .from('orders')
+                        .upsert(baseOrderData, { onConflict: 'code' })
+                        .select()
+                        .single()
+                    upsertedOrder = retryResult.data
+                    orderErr = retryResult.error
+                }
 
                 if (orderErr) {
                     errors.push({ table: 'orders', error: orderErr })
@@ -729,7 +922,9 @@ async function _performSync(demoData) {
                             product_name: p.name,
                             quantity: p.quantity || 1,
                             price: p.price || 0,
-                            delivered_qty: p.deliveredQty || 0
+                            delivered_qty: p.deliveredQty || 0,
+                            discount: p.discount || 0,
+                            discount_type: p.discountType || 'percent'
                         }))
                         const { error: itemsErr } = await supabase
                             .from('order_items')
@@ -798,7 +993,37 @@ async function _performSync(demoData) {
         }
         await _deleteRemovedRecords('purchases', 'code', demoData.purchases?.map(p => p.id) || [])
 
-        // 7. Sync Inventory History (insert only, no upsert needed since entries are immutable)
+        // 7. Sync Expenses
+        if (_expensesTableAvailable && demoData.expenses && demoData.expenses.length > 0) {
+            const expensesData = demoData.expenses.map(expense => ({
+                code: expense.id,
+                date: expense.date || new Date().toISOString().split('T')[0],
+                category: expense.category || 'Khác',
+                amount: Number(expense.amount) || 0,
+                payment_method: expense.paymentMethod || 'Tiền mặt',
+                payee: expense.payee || null,
+                notes: expense.notes || null,
+                created_at: expense.createdAt || new Date().toISOString()
+            }))
+
+            const { error } = await supabase
+                .from('expenses')
+                .upsert(expensesData, { onConflict: 'code' })
+
+            if (error) {
+                if (isMissingExpensesTable(error)) {
+                    _expensesTableAvailable = false
+                    console.warn('⚠️ Supabase expenses table is missing. Run supabase_expenses_migration.sql to persist operating expenses.')
+                } else {
+                    errors.push({ table: 'expenses', error })
+                }
+            }
+        }
+        if (_expensesTableAvailable) {
+            await _deleteRemovedRecords('expenses', 'code', demoData.expenses?.map(e => e.id) || [])
+        }
+
+        // 8. Sync Inventory History (insert only, no upsert needed since entries are immutable)
         // Only sync new entries that don't have a UUID _supabaseId
         if (demoData.inventoryHistory && demoData.inventoryHistory.length > 0) {
             const newEntries = demoData.inventoryHistory.filter(h => !h._supabaseId)
@@ -842,13 +1067,59 @@ async function _performSync(demoData) {
             }
         }
 
+        // 9. Sync Deliveries
+        if (demoData.deliveries && demoData.deliveries.length > 0) {
+            const newDeliveries = demoData.deliveries.filter(d => !d._supabaseId)
+            if (newDeliveries.length > 0) {
+                const deliveriesData = newDeliveries.map(d => ({
+                    order_code: d.orderCode || null,
+                    product_code: d.productCode || null,
+                    customer_id: d.customerId || null,
+                    customer_name: d.customerName || null,
+                    product_name: d.productName || null,
+                    quantity_ordered: d.quantityOrdered || 0,
+                    quantity_delivered: d.quantityDelivered || 0,
+                    delivery_date: d.deliveryDate || null,
+                    delivery_time: d.deliveryTime || null,
+                    delivery_method: d.deliveryMethod || null,
+                    delivery_notes: d.deliveryNotes || null,
+                    status: d.status || 'pending',
+                    created_by: d.createdBy || null
+                }))
+                const { data: insertedDeliveries, error } = await supabase
+                    .from('deliveries')
+                    .insert(deliveriesData)
+                    .select()
+                if (error) {
+                    errors.push({ table: 'deliveries', error })
+                } else if (insertedDeliveries && insertedDeliveries.length === newDeliveries.length) {
+                    insertedDeliveries.forEach((row, index) => {
+                        const delivery = newDeliveries[index]
+                        if (delivery) {
+                            delivery._supabaseId = row.id
+                            delivery.id = row.id
+                        }
+                    })
+                    try {
+                        localStorage.setItem('erp_vietnam_data', JSON.stringify(demoData))
+                        console.log('✅ Persisted synced deliveries IDs to localStorage')
+                    } catch (persistError) {
+                        console.warn('⚠️ Could not persist synced deliveries IDs to localStorage:', persistError)
+                    }
+                }
+            }
+        }
+
         if (errors.length > 0) {
             console.warn('⚠️ Sync completed with errors:', errors)
+            return false
         } else {
             console.log('✅ Data synced to Supabase successfully!')
+            return true
         }
     } catch (err) {
         console.error('❌ Sync to Supabase failed:', err)
+        return false
     } finally {
         _isSyncing = false
     }
@@ -902,10 +1173,10 @@ export async function deleteAllDataFromSupabase() {
     }
 
     // Xóa bảng cha
-    const parentTables = ['inventory_history', 'orders', 'purchases', 'products', 'categories', 'suppliers', 'customers', 'company_settings']
+    const parentTables = ['inventory_history', 'expenses', 'orders', 'purchases', 'products', 'categories', 'suppliers', 'customers', 'company_settings']
     for (const table of parentTables) {
         const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000')
-        if (error) errors.push({ table, error })
+        if (error && !(table === 'expenses' && isMissingExpensesTable(error))) errors.push({ table, error })
     }
 
     if (errors.length > 0) {

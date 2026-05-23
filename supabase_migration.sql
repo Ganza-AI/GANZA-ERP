@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS public.orders (
     status TEXT DEFAULT 'Mới' CHECK (status IN ('Mới', 'Đang xử lý', 'Đã giao', 'Hoàn thành', 'Hủy')),
     payment_method TEXT DEFAULT 'Tiền mặt',
     payment_status TEXT DEFAULT 'Chưa thanh toán' CHECK (payment_status IN ('Chưa thanh toán', 'Đã thanh toán', 'Công nợ')),
+    paid_amount NUMERIC DEFAULT 0,
+    remaining_balance NUMERIC DEFAULT 0,
+    payment_history JSONB DEFAULT '[]'::jsonb,
     discount NUMERIC DEFAULT 0,
     discount_type TEXT DEFAULT 'percent',
     notes TEXT,
@@ -90,6 +93,9 @@ CREATE TABLE IF NOT EXISTS public.orders (
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE IF EXISTS public.orders ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0;
+ALTER TABLE IF EXISTS public.orders ADD COLUMN IF NOT EXISTS remaining_balance NUMERIC DEFAULT 0;
+ALTER TABLE IF EXISTS public.orders ADD COLUMN IF NOT EXISTS payment_history JSONB DEFAULT '[]'::jsonb;
 
 -- 6. BẢNG CHI TIẾT ĐƠN HÀNG (order_items)
 CREATE TABLE IF NOT EXISTS public.order_items (
@@ -133,7 +139,22 @@ CREATE TABLE IF NOT EXISTS public.purchase_items (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 9. BẢNG LỊCH SỬ KHO (inventory_history)
+-- 9. BẢNG CHI PHÍ VẬN HÀNH (expenses)
+CREATE TABLE IF NOT EXISTS public.expenses (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
+    category TEXT NOT NULL DEFAULT 'Khác',
+    amount NUMERIC NOT NULL DEFAULT 0,
+    payment_method TEXT DEFAULT 'Tiền mặt',
+    payee TEXT,
+    notes TEXT,
+    user_id UUID REFERENCES auth.users(id),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 10. BẢNG LỊCH SỬ KHO (inventory_history)
 CREATE TABLE IF NOT EXISTS public.inventory_history (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     product_id UUID REFERENCES public.products(id) ON DELETE SET NULL,
@@ -153,7 +174,7 @@ CREATE TABLE IF NOT EXISTS public.inventory_history (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 10. BẢNG CÀI ĐẶT SHOP (company_settings)
+-- 11. BẢNG CÀI ĐẶT SHOP (company_settings)
 CREATE TABLE IF NOT EXISTS public.company_settings (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
@@ -175,6 +196,7 @@ ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchase_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.inventory_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.company_settings ENABLE ROW LEVEL SECURITY;
 
@@ -358,6 +380,28 @@ CREATE POLICY "Authenticated users can delete purchase_items"
     TO authenticated
     USING (true);
 
+-- EXPENSES policies
+CREATE POLICY "Authenticated users can read expenses"
+    ON public.expenses FOR SELECT
+    TO authenticated
+    USING (true);
+
+CREATE POLICY "Authenticated users can insert expenses"
+    ON public.expenses FOR INSERT
+    TO authenticated
+    WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update expenses"
+    ON public.expenses FOR UPDATE
+    TO authenticated
+    USING (true)
+    WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can delete expenses"
+    ON public.expenses FOR DELETE
+    TO authenticated
+    USING (true);
+
 -- INVENTORY_HISTORY policies
 CREATE POLICY "Authenticated users can read inventory_history"
     ON public.inventory_history FOR SELECT
@@ -433,6 +477,10 @@ CREATE INDEX IF NOT EXISTS idx_purchases_date ON public.purchases(date);
 
 CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON public.purchase_items(purchase_id);
 
+CREATE INDEX IF NOT EXISTS idx_expenses_code ON public.expenses(code);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON public.expenses(date);
+CREATE INDEX IF NOT EXISTS idx_expenses_category ON public.expenses(category);
+
 CREATE INDEX IF NOT EXISTS idx_inventory_history_product ON public.inventory_history(product_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_history_type ON public.inventory_history(type);
 CREATE INDEX IF NOT EXISTS idx_inventory_history_created ON public.inventory_history(created_at);
@@ -470,6 +518,10 @@ CREATE OR REPLACE TRIGGER on_orders_updated
 
 CREATE OR REPLACE TRIGGER on_purchases_updated
     BEFORE UPDATE ON public.purchases
+    FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+CREATE OR REPLACE TRIGGER on_expenses_updated
+    BEFORE UPDATE ON public.expenses
     FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
 CREATE OR REPLACE TRIGGER on_company_settings_updated
