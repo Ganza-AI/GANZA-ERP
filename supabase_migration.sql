@@ -133,11 +133,23 @@ CREATE TABLE IF NOT EXISTS public.purchases (
 CREATE TABLE IF NOT EXISTS public.purchase_items (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     purchase_id UUID NOT NULL REFERENCES public.purchases(id) ON DELETE CASCADE,
+    product_code TEXT,
     product_name TEXT NOT NULL,
     quantity INTEGER NOT NULL DEFAULT 1,
     price NUMERIC NOT NULL DEFAULT 0,
+    created_product BOOLEAN DEFAULT false,
+    previous_stock INTEGER,
+    previous_import_price NUMERIC,
+    previous_supplier TEXT,
+    previous_purchased_qty INTEGER,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS product_code TEXT;
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS created_product BOOLEAN DEFAULT false;
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_stock INTEGER;
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_import_price NUMERIC;
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_supplier TEXT;
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_purchased_qty INTEGER;
 
 -- 9. BẢNG CHI PHÍ VẬN HÀNH (expenses)
 CREATE TABLE IF NOT EXISTS public.expenses (

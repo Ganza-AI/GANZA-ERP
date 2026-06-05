@@ -471,7 +471,7 @@ window._supabaseData = null
             }
 
             getDefaultExpenseCategories() {
-                return ['Lương', 'Thuê kho', 'Vận chuyển', 'Marketing', 'Điện nước', 'Văn phòng phẩm', 'Bảo trì', 'Khác'];
+                return ['Lương', 'Thuê kho', 'Chi phí mua hàng', 'Vận chuyển', 'Marketing', 'Điện nước', 'Văn phòng phẩm', 'Bảo trì', 'Khác'];
             }
 
             getExpenseCategories() {
@@ -493,12 +493,95 @@ window._supabaseData = null
                 });
             }
 
+            formatDateInputValue(date) {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+
+            getExpensePeriodRange(period = 'month') {
+                const today = this.getVietnamTime();
+                const startDate = new Date(today);
+                const endDate = new Date(today);
+
+                if (period === 'all') {
+                    return {
+                        fromDate: '',
+                        toDate: ''
+                    };
+                }
+
+                if (period === 'day') {
+                    return {
+                        fromDate: this.formatDateInputValue(today),
+                        toDate: this.formatDateInputValue(today)
+                    };
+                }
+
+                if (period === 'week') {
+                    const dayOfWeek = today.getDay();
+                    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                    startDate.setDate(today.getDate() - daysFromMonday);
+                    return {
+                        fromDate: this.formatDateInputValue(startDate),
+                        toDate: this.formatDateInputValue(endDate)
+                    };
+                }
+
+                startDate.setDate(1);
+                return {
+                    fromDate: this.formatDateInputValue(startDate),
+                    toDate: this.formatDateInputValue(endDate)
+                };
+            }
+
+            getExpensePeriodLabel(period) {
+                const labels = {
+                    all: 'Tất cả',
+                    day: 'Theo ngày',
+                    week: 'Theo tuần',
+                    month: 'Theo tháng',
+                    custom: 'Tùy chỉnh'
+                };
+                return labels[period] || labels.custom;
+            }
+
+            getExpenseRangeText(fromDate, toDate) {
+                const fromText = fromDate ? this.formatDateForDisplay(fromDate) : 'đầu dữ liệu';
+                const toText = toDate ? this.formatDateForDisplay(toDate) : 'hiện tại';
+                return `${fromText} - ${toText}`;
+            }
+
             getExpenseBreakdown(expenses = this.demoData.expenses || []) {
                 return expenses.reduce((breakdown, expense) => {
                     const category = expense.category || 'Khác';
                     breakdown[category] = (breakdown[category] || 0) + (Number(expense.amount) || 0);
                     return breakdown;
                 }, {});
+            }
+
+            renderExpenseBreakdownRows(expenses = this.demoData.expenses || []) {
+                const totalExpenses = expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+                const breakdown = this.getExpenseBreakdown(expenses);
+
+                return Object.entries(breakdown)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([category, amount]) => {
+                        const percent = totalExpenses > 0 ? (amount / totalExpenses * 100).toFixed(1) : '0.0';
+                        return `
+                            <div style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
+                                <div style="display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px;">
+                                    <strong>${category}</strong>
+                                    <span style="font-weight: 700; color: #dc2626;">${amount.toLocaleString('vi-VN')} VNĐ</span>
+                                </div>
+                                <div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
+                                    <div style="height: 100%; width: ${percent}%; background: #ef4444;"></div>
+                                </div>
+                                <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${percent}% tổng chi phí đang xem</div>
+                            </div>
+                        `;
+                    }).join('') || '<div style="padding: 20px; color: #6b7280; text-align: center;">Chưa có dữ liệu chi phí trong kỳ đang xem</div>';
             }
 
             getOrderCost(order) {
@@ -2035,16 +2118,42 @@ window._supabaseData = null
             getPurchasesContent() {
                 const purchasesList = this.demoData.purchases.map(purchase => {
                     const itemCount = purchase.products ? purchase.products.length : 0;
+                    const createdAtText = purchase.createdAt
+                        ? new Date(purchase.createdAt).toLocaleString('vi-VN', {
+                            timeZone: 'Asia/Ho_Chi_Minh',
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false
+                        })
+                        : '';
+                    const productNames = (purchase.products || [])
+                        .map(item => item.name || item.productName || item.productId || item.id)
+                        .filter(Boolean);
+                    const productTitle = productNames.length > 0
+                        ? (productNames.length > 2 ? `${productNames.slice(0, 2).join(', ')} +${productNames.length - 2}` : productNames.join(', '))
+                        : 'Sản phẩm chưa xác định';
+                    const stockStatus = this.getPurchaseStockStatus(purchase);
+                    const bulkCheckbox = `<label style="display: flex; align-items: center; margin-right: 8px;"><input type="checkbox" class="purchase-bulk-checkbox" value="${purchase.id}" onclick="event.stopPropagation()" style="width: 18px; height: 18px;"></label>`;
                     const totalText = purchase.total ? purchase.total.toLocaleString('vi-VN') + ' VNĐ' : '0 VNĐ';
                     return `
                         <div class="activity-item">
+                            ${bulkCheckbox}
                             <div class="activity-icon ${purchase.status === 'Đã nhận hàng' ? 'success' : 'info'}">🛒</div>
                             <div class="activity-content">
-                                <div class="activity-title">${purchase.id} - ${purchase.supplierName || purchase.supplier || 'Nhà cung cấp chưa xác định'}</div>
-                                <div class="activity-desc">📦 ${itemCount} sản phẩm | 📅 ${purchase.date}</div>
+                                <div class="activity-title">${productTitle}</div>
+                                <div class="activity-desc">📦 ${itemCount} sản phẩm | 📅 Ngày mua: ${purchase.date || '-'}</div>
+                                ${createdAtText ? `<div class="activity-desc">🕒 Tạo lúc: ${createdAtText}</div>` : ''}
                                 <div class="activity-desc">💰 ${totalText} | ${purchase.status || 'Chưa xử lý'}</div>
+                                <div class="activity-desc">📥 ${stockStatus}</div>
                             </div>
-                            <div class="activity-time">${purchase.paymentStatus || ''}</div>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <div class="activity-time">${purchase.paymentStatus || ''}</div>
+                                <button onclick="app.showUpdatePurchaseForm('${purchase.id}')" style="background: #3b82f6; color: white; padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Cập nhật</button>
+                                <button onclick="app.deletePurchaseOrder('${purchase.id}')" style="background: #ef4444; color: white; padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Xóa</button>
+                            </div>
                         </div>
                     `;
                 }).join('') || `<div class="activity-item"><div class="activity-content"><div class="activity-title">Chưa có đơn mua hàng nào.</div></div></div>`;
@@ -2062,10 +2171,21 @@ window._supabaseData = null
                                     <div class="action-icon">📊</div>
                                     <div class="action-title">Báo cáo mua</div>
                                 </div>
+                                <div class="action-button" onclick="app.showUploadPurchasesForm()">
+                                    <div class="action-icon">📤</div>
+                                    <div class="action-title">Upload Excel</div>
+                                </div>
                                 <div class="action-button" onclick="app.deleteAllPurchases()">
                                     <div class="action-icon">🗑️</div>
                                     <div class="action-title">Xóa tất cả</div>
                                 </div>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;">
+                                <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: #374151;">
+                                    <input type="checkbox" onchange="app.toggleAllPurchaseSelection(this.checked)" style="width: 18px; height: 18px;">
+                                    Chọn tất cả
+                                </label>
+                                <button onclick="app.showBulkUpdatePurchasesForm()" style="background: #0f766e; color: white; border: none; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-weight: 600;">Cập nhật trạng thái đã chọn</button>
                             </div>
                             <div id="purchases-list">
                                 ${purchasesList}
@@ -2076,22 +2196,34 @@ window._supabaseData = null
             }
 
             getExpensesContent() {
-                const today = this.getVietnamTime().toISOString().split('T')[0];
-                const firstDay = new Date(this.getVietnamTime().getFullYear(), this.getVietnamTime().getMonth(), 1).toISOString().split('T')[0];
+                const currentExpenseRange = this.getExpensePeriodRange('all');
+                const monthExpenseRange = this.getExpensePeriodRange('month');
+                const today = currentExpenseRange.toDate;
+                const firstDay = currentExpenseRange.fromDate;
+                const todayInputValue = this.formatDateInputValue(this.getVietnamTime());
                 const expenses = this.demoData.expenses || [];
-                const monthExpenses = this.getExpensesInRange(firstDay, today);
+                const monthExpenses = this.getExpensesInRange(monthExpenseRange.fromDate, monthExpenseRange.toDate);
+                const visibleExpenses = this.getExpensesInRange(firstDay, today);
                 const totalExpenses = expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
                 const monthTotal = monthExpenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
                 const breakdown = this.getExpenseBreakdown(expenses);
                 const topCategory = Object.entries(breakdown).sort((a, b) => b[1] - a[1])[0];
+                const selectedBreakdownRows = this.renderExpenseBreakdownRows(visibleExpenses);
                 const categoryOptions = this.getExpenseCategories().map(category =>
                     `<option value="${category}">${category}</option>`
                 ).join('');
                 const expenseRows = expenses
                     .slice()
                     .sort((a, b) => new Date(b.date) - new Date(a.date))
-                    .map(expense => `
-                        <tr data-expense-id="${expense.id}" style="border-bottom: 1px solid #e5e7eb;">
+                    .map(expense => {
+                        const expenseDate = new Date(expense.date);
+                        const startDate = firstDay ? new Date(firstDay) : null;
+                        const endDate = today ? new Date(today) : null;
+                        if (endDate) endDate.setHours(23, 59, 59, 999);
+                        const isVisibleByDefault = (!startDate || expenseDate >= startDate) && (!endDate || expenseDate <= endDate);
+
+                        return `
+                        <tr data-expense-id="${expense.id}" style="border-bottom: 1px solid #e5e7eb; ${isVisibleByDefault ? '' : 'display: none;'}">
                             <td style="padding: 12px;">${expense.date || ''}</td>
                             <td style="padding: 12px;">
                                 <span style="background: #eef2ff; color: #3730a3; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">${expense.category || 'Khác'}</span>
@@ -2104,25 +2236,8 @@ window._supabaseData = null
                                 <button onclick="app.deleteExpense('${expense.id}')" style="background: #dc2626; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;">Xóa</button>
                             </td>
                         </tr>
-                    `).join('');
-
-                const breakdownRows = Object.entries(breakdown)
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([category, amount]) => {
-                        const percent = totalExpenses > 0 ? (amount / totalExpenses * 100).toFixed(1) : '0.0';
-                        return `
-                            <div style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
-                                <div style="display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px;">
-                                    <strong>${category}</strong>
-                                    <span style="font-weight: 700; color: #dc2626;">${amount.toLocaleString('vi-VN')} VNĐ</span>
-                                </div>
-                                <div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
-                                    <div style="height: 100%; width: ${percent}%; background: #ef4444;"></div>
-                                </div>
-                                <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${percent}% tổng chi phí</div>
-                            </div>
-                        `;
-                    }).join('') || '<div style="padding: 20px; color: #6b7280; text-align: center;">Chưa có dữ liệu chi phí</div>';
+                    `;
+                    }).join('');
 
                 return `
                     <div class="fade-in">
@@ -2161,7 +2276,7 @@ window._supabaseData = null
                                 <form onsubmit="app.createExpense(event)">
                                     <div style="margin-bottom: 14px;">
                                         <label style="display: block; margin-bottom: 6px; font-weight: 600;">Ngày chi phí</label>
-                                        <input type="date" name="date" value="${today}" required style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                        <input type="date" name="date" value="${todayInputValue}" required style="width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 6px;">
                                     </div>
                                     <div style="margin-bottom: 14px;">
                                         <label style="display: block; margin-bottom: 6px; font-weight: 600;">Loại chi phí</label>
@@ -2205,12 +2320,22 @@ window._supabaseData = null
                                         <button onclick="app.exportExpenses()" style="background: var(--primary-green); color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600;">Xuất CSV</button>
                                     </div>
                                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px;">
-                                        <input type="date" id="expense-filter-from" value="${firstDay}" onchange="app.filterExpenseTable()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
-                                        <input type="date" id="expense-filter-to" value="${today}" onchange="app.filterExpenseTable()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                        <select id="expense-filter-period" onchange="app.setExpensePeriod(this.value)" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                            <option value="all" selected>Tất cả</option>
+                                            <option value="day">Theo ngày</option>
+                                            <option value="week">Theo tuần</option>
+                                            <option value="month">Theo tháng</option>
+                                            <option value="custom">Tùy chỉnh</option>
+                                        </select>
+                                        <input type="date" id="expense-filter-from" value="${firstDay}" onchange="app.setExpenseCustomPeriod()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
+                                        <input type="date" id="expense-filter-to" value="${today}" onchange="app.setExpenseCustomPeriod()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
                                         <select id="expense-filter-category" onchange="app.filterExpenseTable()" style="padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
                                             <option value="">Tất cả loại</option>
                                             ${categoryOptions}
                                         </select>
+                                    </div>
+                                    <div id="expense-filter-summary" style="margin-bottom: 14px; color: #4b5563; font-size: 13px;">
+                                        Tất cả: ${this.getExpenseRangeText(firstDay, today)} · ${visibleExpenses.length} khoản · ${visibleExpenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0).toLocaleString('vi-VN')} VNĐ
                                     </div>
                                     <div style="overflow-x: auto;">
                                         <table style="width: 100%; border-collapse: collapse;">
@@ -2226,15 +2351,20 @@ window._supabaseData = null
                                                 </tr>
                                             </thead>
                                             <tbody id="expenses-table">
-                                                ${expenseRows || '<tr><td colspan="7" style="padding: 24px; text-align: center; color: #6b7280;">Chưa có chi phí nào</td></tr>'}
+                                                ${expenseRows}
+                                                <tr id="expenses-empty-row" style="${visibleExpenses.length === 0 ? '' : 'display: none;'}">
+                                                    <td colspan="7" style="padding: 24px; text-align: center; color: #6b7280;">${expenses.length ? 'Không có khoản chi trong kỳ đang chọn' : 'Chưa có chi phí nào'}</td>
+                                                </tr>
                                             </tbody>
                                         </table>
                                     </div>
                                 </div>
 
                                 <div style="background: white; border-radius: 8px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                                    <h3 style="margin: 0 0 14px 0; color: var(--text-primary);">Tổng hợp theo loại chi phí</h3>
-                                    ${breakdownRows}
+                                    <h3 style="margin: 0 0 14px 0; color: var(--text-primary);">Tổng hợp theo loại chi phí đang xem</h3>
+                                    <div id="expense-breakdown-list">
+                                        ${selectedBreakdownRows}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2291,13 +2421,36 @@ window._supabaseData = null
                 this.loadPage('expenses');
             }
 
+            setExpensePeriod(period) {
+                const fromInput = document.getElementById('expense-filter-from');
+                const toInput = document.getElementById('expense-filter-to');
+                const periodSelect = document.getElementById('expense-filter-period');
+                if (periodSelect) periodSelect.value = period;
+
+                if (period !== 'custom' && fromInput && toInput) {
+                    const range = this.getExpensePeriodRange(period);
+                    fromInput.value = range.fromDate;
+                    toInput.value = range.toDate;
+                }
+
+                this.filterExpenseTable();
+            }
+
+            setExpenseCustomPeriod() {
+                const periodSelect = document.getElementById('expense-filter-period');
+                if (periodSelect) periodSelect.value = 'custom';
+                this.filterExpenseTable();
+            }
+
             filterExpenseTable() {
+                const period = document.getElementById('expense-filter-period')?.value || 'custom';
                 const fromDate = document.getElementById('expense-filter-from')?.value || '';
                 const toDate = document.getElementById('expense-filter-to')?.value || '';
                 const category = document.getElementById('expense-filter-category')?.value || '';
                 const rows = document.querySelectorAll('#expenses-table tr[data-expense-id]');
                 let visibleCount = 0;
                 let visibleTotal = 0;
+                const visibleExpenses = [];
 
                 rows.forEach(row => {
                     const expense = (this.demoData.expenses || []).find(item => item.id === row.getAttribute('data-expense-id'));
@@ -2314,8 +2467,23 @@ window._supabaseData = null
                     if (visible) {
                         visibleCount++;
                         visibleTotal += Number(expense.amount) || 0;
+                        visibleExpenses.push(expense);
                     }
                 });
+
+                const emptyRow = document.getElementById('expenses-empty-row');
+                if (emptyRow) emptyRow.style.display = visibleCount === 0 ? '' : 'none';
+
+                const periodLabel = this.getExpensePeriodLabel(period);
+                const summary = document.getElementById('expense-filter-summary');
+                if (summary) {
+                    summary.innerHTML = `${periodLabel}: ${this.getExpenseRangeText(fromDate, toDate)} · ${visibleCount} khoản · ${visibleTotal.toLocaleString('vi-VN')} VNĐ`;
+                }
+
+                const breakdownList = document.getElementById('expense-breakdown-list');
+                if (breakdownList) {
+                    breakdownList.innerHTML = this.renderExpenseBreakdownRows(visibleExpenses);
+                }
 
                 this.showNotification(`Đang hiển thị ${visibleCount} khoản chi, tổng ${visibleTotal.toLocaleString('vi-VN')} VNĐ`, 'info');
             }
@@ -6569,6 +6737,270 @@ window._supabaseData = null
                 this.showNotification('Tìm kiếm nhà cung cấp theo tên hoặc sản phẩm', 'info');
             }
 
+            toggleAllPurchaseSelection(checked) {
+                document.querySelectorAll('.purchase-bulk-checkbox').forEach(checkbox => {
+                    checkbox.checked = checked;
+                });
+            }
+
+            getSelectedPurchaseIds() {
+                return Array.from(document.querySelectorAll('.purchase-bulk-checkbox:checked'))
+                    .map(checkbox => checkbox.value)
+                    .filter(Boolean);
+            }
+
+            showBulkUpdatePurchasesForm() {
+                const selectedIds = this.getSelectedPurchaseIds();
+                if (selectedIds.length === 0) {
+                    this.showNotification('Vui lòng chọn ít nhất một đơn mua/sản phẩm để cập nhật', 'warning');
+                    return;
+                }
+
+                const formHTML = `
+                    <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center; padding: 16px;" onclick="closeModal(this)">
+                        <div style="background: white; padding: 28px; border-radius: 12px; width: 620px; max-width: 96vw;" onclick="event.stopPropagation()">
+                            <h3 style="margin-bottom: 18px; color: var(--text-primary);">Cập nhật trạng thái đã chọn (${selectedIds.length})</h3>
+                            <form onsubmit="app.bulkUpdateSelectedPurchases(event)">
+                                <input type="hidden" name="purchaseIds" value="${selectedIds.join(',')}">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Trạng thái đơn</label>
+                                        <select name="status" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="__keep__">Giữ nguyên</option>
+                                            <option value="Đang chờ">Đang chờ</option>
+                                            <option value="Đã nhận hàng">Đã nhận hàng</option>
+                                            <option value="Hủy">Hủy</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Thanh toán</label>
+                                        <select name="paymentStatus" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="__keep__">Giữ nguyên</option>
+                                            <option value="Chưa thanh toán">Chưa thanh toán</option>
+                                            <option value="Đã thanh toán">Đã thanh toán</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Nhập kho</label>
+                                        <select name="stockStatus" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="__keep__">Giữ nguyên</option>
+                                            <option value="Chưa nhập kho">Chưa nhập kho</option>
+                                            <option value="Đã nhập kho">Đã nhập kho</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div style="margin-bottom: 18px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Ghi chú chung</label>
+                                    <textarea name="notes" placeholder="Nếu nhập, ghi chú này sẽ áp dụng cho các đơn đã chọn" style="width: 100%; min-height: 76px; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;"></textarea>
+                                </div>
+
+                                <div style="background: #ecfdf5; border: 1px solid #10b981; color: #065f46; border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 14px;">
+                                    Chọn “Đã nhập kho” sẽ chỉ nhập kho các đơn chưa nhập. Chọn “Chưa nhập kho” sẽ thu hồi nhập kho của các đơn đã nhập.
+                                </div>
+
+                                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                                    <button type="button" onclick="closeModal(this.closest('div[style*=fixed]'))" style="padding: 12px 24px; border: 2px solid #e5e7eb; background: white; border-radius: 8px; cursor: pointer;">Hủy</button>
+                                    <button type="submit" style="padding: 12px 24px; background: #0f766e; color: white; border: none; border-radius: 8px; cursor: pointer;">Cập nhật 1 lần</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', formHTML);
+            }
+
+            bulkUpdateSelectedPurchases(event) {
+                event.preventDefault();
+                const form = event.target;
+                const formData = new FormData(form);
+                const selectedIds = String(formData.get('purchaseIds') || '').split(',').filter(Boolean);
+                if (selectedIds.length === 0) {
+                    this.showNotification('Không có đơn mua nào được chọn', 'warning');
+                    return;
+                }
+
+                const targetStatus = formData.get('status');
+                const targetPaymentStatus = formData.get('paymentStatus');
+                const targetStockStatus = formData.get('stockStatus');
+                const notes = (formData.get('notes') || '').trim();
+                const selectedPurchases = selectedIds
+                    .map(id => (this.demoData.purchases || []).find(purchase => purchase.id === id))
+                    .filter(Boolean);
+
+                const rollbackTargets = selectedPurchases.filter(purchase =>
+                    targetStockStatus === 'Chưa nhập kho' && this.hasPurchaseStockImport(purchase)
+                );
+                if (rollbackTargets.length > 0 && !confirm(`Thu hồi nhập kho cho ${rollbackTargets.length} đơn mua đã chọn?`)) {
+                    return;
+                }
+
+                let updatedCount = 0;
+                let importedItems = 0;
+                let rolledBackCount = 0;
+
+                selectedPurchases.forEach(purchase => {
+                    const newStatus = targetStatus === '__keep__' ? purchase.status : targetStatus;
+                    const newPaymentStatus = targetPaymentStatus === '__keep__' ? purchase.paymentStatus : targetPaymentStatus;
+                    const newStockStatus = targetStockStatus === '__keep__' ? this.getPurchaseStockStatus(purchase) : targetStockStatus;
+
+                    if (this.hasPurchaseStockImport(purchase) && newStockStatus !== 'Đã nhập kho') {
+                        this.rollbackPurchaseOrderEffects(purchase, { removePurchase: false });
+                        rolledBackCount++;
+                    }
+
+                    if (newStatus && newStatus !== '__keep__') purchase.status = newStatus;
+                    if (newPaymentStatus && newPaymentStatus !== '__keep__') purchase.paymentStatus = newPaymentStatus;
+                    if (notes) purchase.notes = notes;
+
+                    if (newStockStatus === 'Đã nhập kho') {
+                        const result = this.applyPurchaseStockImport(purchase, 'bulk-update');
+                        importedItems += result.importedItems;
+                        purchase.status = newStatus === 'Hủy' ? 'Hủy' : 'Đã nhận hàng';
+                    } else if (newStockStatus === 'Chưa nhập kho') {
+                        purchase.stockStatus = 'Chưa nhập kho';
+                        purchase.stockImported = false;
+                    }
+
+                    if (this.hasPurchaseStockImport(purchase)) {
+                        this.recordPurchaseExpense(purchase, purchase.supplierName || purchase.supplier, 'bulk-update');
+                    }
+                    updatedCount++;
+                });
+
+                this.saveToLocalStorage();
+                this.showNotification(`Đã cập nhật ${updatedCount} đơn mua đã chọn${importedItems > 0 ? `, nhập kho ${importedItems} dòng hàng` : ''}${rolledBackCount > 0 ? `, thu hồi ${rolledBackCount} đơn` : ''}`, 'success');
+                this.loadPage('purchases');
+                const modal = form.closest("div[style*=\"fixed\"]"); if (modal) modal.remove();
+            }
+
+            showUpdatePurchaseForm(purchaseId) {
+                const purchase = (this.demoData.purchases || []).find(item => item.id === purchaseId);
+                if (!purchase) {
+                    this.showNotification('Không tìm thấy đơn mua cần cập nhật', 'error');
+                    return;
+                }
+
+                const stockStatus = this.getPurchaseStockStatus(purchase);
+                const productRows = (purchase.products || []).map(item => `
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #e5e7eb;">${item.productId || item.id || item.productCode || ''}</td>
+                        <td style="padding: 8px; border: 1px solid #e5e7eb;">${item.name || item.productName || ''}</td>
+                        <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">${Number(item.quantity || 0).toLocaleString('vi-VN')}</td>
+                        <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">${Number(item.price || 0).toLocaleString('vi-VN')}</td>
+                    </tr>
+                `).join('');
+
+                const formHTML = `
+                    <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center; padding: 16px;" onclick="closeModal(this)">
+                        <div style="background: white; padding: 28px; border-radius: 12px; width: 680px; max-width: 96vw; max-height: 92vh; overflow-y: auto;" onclick="event.stopPropagation()">
+                            <h3 style="margin-bottom: 20px; color: var(--text-primary);">Cập nhật đơn mua ${purchase.id}</h3>
+                            <form onsubmit="app.updatePurchaseOrder(event, '${purchase.id}')">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Trạng thái đơn</label>
+                                        <select name="status" required style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="Đang chờ" ${purchase.status === 'Đang chờ' ? 'selected' : ''}>Đang chờ</option>
+                                            <option value="Đã nhận hàng" ${purchase.status === 'Đã nhận hàng' ? 'selected' : ''}>Đã nhận hàng</option>
+                                            <option value="Hủy" ${purchase.status === 'Hủy' ? 'selected' : ''}>Hủy</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Thanh toán</label>
+                                        <select name="paymentStatus" required style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="Chưa thanh toán" ${purchase.paymentStatus !== 'Đã thanh toán' ? 'selected' : ''}>Chưa thanh toán</option>
+                                            <option value="Đã thanh toán" ${purchase.paymentStatus === 'Đã thanh toán' ? 'selected' : ''}>Đã thanh toán</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Nhập kho</label>
+                                        <select name="stockStatus" required style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="Chưa nhập kho" ${stockStatus !== 'Đã nhập kho' ? 'selected' : ''}>Chưa nhập kho</option>
+                                            <option value="Đã nhập kho" ${stockStatus === 'Đã nhập kho' ? 'selected' : ''}>Đã nhập kho</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div style="margin-bottom: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Ghi chú</label>
+                                    <textarea name="notes" style="width: 100%; min-height: 72px; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">${purchase.notes || ''}</textarea>
+                                </div>
+
+                                <div style="margin-bottom: 18px; overflow-x: auto;">
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                                        <thead>
+                                            <tr style="background: #f3f4f6;">
+                                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Mã SP</th>
+                                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Sản phẩm</th>
+                                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">SL</th>
+                                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">Giá nhập</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>${productRows || '<tr><td colspan="4" style="padding: 16px; text-align: center; color: #6b7280;">Chưa có sản phẩm</td></tr>'}</tbody>
+                                    </table>
+                                </div>
+
+                                <div style="background: #fef3c7; border: 1px solid #f59e0b; color: #92400e; border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 14px;">
+                                    Chuyển sang “Đã nhập kho” sẽ cộng tồn kho và ghi chi phí mua hàng nếu đơn chưa nhập kho. Chuyển ngược về “Chưa nhập kho” sẽ thu hồi tồn kho, lưu lượng kho và chi phí mua hàng của đơn này.
+                                </div>
+
+                                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                                    <button type="button" onclick="closeModal(this.closest('div[style*=fixed]'))" style="padding: 12px 24px; border: 2px solid #e5e7eb; background: white; border-radius: 8px; cursor: pointer;">Hủy</button>
+                                    <button type="submit" style="padding: 12px 24px; background: var(--primary-blue); color: white; border: none; border-radius: 8px; cursor: pointer;">Cập nhật</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', formHTML);
+            }
+
+            updatePurchaseOrder(event, purchaseId) {
+                event.preventDefault();
+                const form = event.target;
+                const formData = new FormData(form);
+                const purchase = (this.demoData.purchases || []).find(item => item.id === purchaseId);
+                if (!purchase) {
+                    this.showNotification('Không tìm thấy đơn mua cần cập nhật', 'error');
+                    return;
+                }
+
+                const oldStockImported = this.hasPurchaseStockImport(purchase);
+                const newStatus = formData.get('status') || purchase.status || 'Đang chờ';
+                const newPaymentStatus = formData.get('paymentStatus') || purchase.paymentStatus || 'Chưa thanh toán';
+                const newStockStatus = formData.get('stockStatus') || this.getPurchaseStockStatus(purchase);
+
+                if (oldStockImported && newStockStatus !== 'Đã nhập kho') {
+                    if (!confirm(`Thu hồi nhập kho của đơn ${purchase.id}? Tồn kho, lưu lượng kho và chi phí mua hàng liên quan sẽ được hoàn lại.`)) {
+                        return;
+                    }
+                    this.rollbackPurchaseOrderEffects(purchase, { removePurchase: false });
+                }
+
+                purchase.status = newStatus;
+                purchase.paymentStatus = newPaymentStatus;
+                purchase.notes = (formData.get('notes') || '').trim();
+
+                let importResult = { importedItems: 0, createdProducts: 0 };
+                if (newStockStatus === 'Đã nhập kho') {
+                    importResult = this.applyPurchaseStockImport(purchase, 'update');
+                    purchase.status = newStatus === 'Hủy' ? 'Hủy' : 'Đã nhận hàng';
+                } else {
+                    purchase.stockStatus = 'Chưa nhập kho';
+                    purchase.stockImported = false;
+                }
+
+                if (this.hasPurchaseStockImport(purchase)) {
+                    this.recordPurchaseExpense(purchase, purchase.supplierName || purchase.supplier, 'update');
+                }
+
+                this.saveToLocalStorage();
+                const details = importResult.importedItems > 0 ? `, đã nhập kho ${importResult.importedItems} dòng hàng` : '';
+                this.showNotification(`Đã cập nhật đơn mua ${purchase.id}${details}`, 'success');
+                this.loadPage('purchases');
+                const modal = form.closest("div[style*=\"fixed\"]"); if (modal) modal.remove();
+            }
+
             showCreatePurchaseForm() {
                 const supplierOptions = this.demoData.suppliers.map(s => 
                     `<option value="${s.id}">${s.name}</option>`
@@ -6642,16 +7074,18 @@ window._supabaseData = null
                 }
 
                 const purchaseId = 'PH' + String(this.demoData.purchases.length + 1).padStart(3, '0');
+                const today = this.formatDateInputValue(this.getVietnamTime());
                 this.demoData.purchases.push({
                     id: purchaseId,
                     supplierId: supplier.id,
                     supplierName: supplier.name,
-                    date: this.getVietnamTime().toISOString().split('T')[0],
+                    date: today,
                     time: this.getVietnamTime().toLocaleTimeString('vi-VN', { hour12: false }),
                     products: [{ name: productName, quantity, price }],
                     total: quantity * price,
                     status: 'Đã nhận hàng',
-                    paymentStatus: 'Chưa thanh toán'
+                    paymentStatus: 'Chưa thanh toán',
+                    createdAt: new Date().toISOString()
                 });
 
                 this.addInventoryHistory({
@@ -6661,7 +7095,7 @@ window._supabaseData = null
                     quantity: quantity,
                     oldStock: oldStock,
                     newStock: product.stock,
-                    date: this.getVietnamTime().toISOString().split('T')[0],
+                    date: today,
                     time: this.formatTimeNow(),
                     reason: `Nhập hàng từ ${supplier.name}`,
                     supplierId: supplier.id,
@@ -6672,6 +7106,1056 @@ window._supabaseData = null
                 this.saveToLocalStorage();
                 this.showNotification(`Đã tạo đơn mua hàng từ ${supplier.name}`, 'success');
                 const modal = form.closest("div[style*=\"fixed\"]"); if(modal) modal.remove();
+            }
+
+            // Purchase order flow that receives stock immediately.
+            getNextRecordCode(prefix, records) {
+                const maxNumber = (records || []).reduce((max, record) => {
+                    const value = String(record?.id || '');
+                    if (!value.startsWith(prefix)) return max;
+                    const number = parseInt(value.slice(prefix.length), 10);
+                    return Number.isFinite(number) ? Math.max(max, number) : max;
+                }, 0);
+                return prefix + String(maxNumber + 1).padStart(3, '0');
+            }
+
+            togglePurchaseProductFields(select) {
+                const modal = select.closest('div[style*="fixed"]');
+                const newProductFields = modal?.querySelector('[data-purchase-new-product-fields]');
+                const priceInput = modal?.querySelector('input[name="price"]');
+                const salePriceInput = modal?.querySelector('input[name="salePrice"]');
+                const isNewProduct = select.value === '__new__';
+
+                if (newProductFields) {
+                    newProductFields.style.display = isNewProduct ? 'block' : 'none';
+                    newProductFields.querySelectorAll('input, select').forEach(input => {
+                        input.required = isNewProduct && input.dataset.required === 'true';
+                    });
+                }
+
+                if (!isNewProduct) {
+                    const product = this.demoData.products.find(p => p.id === select.value);
+                    if (product && priceInput) {
+                        priceInput.value = product.importPrice || '';
+                    }
+                    if (product && salePriceInput) {
+                        salePriceInput.value = product.price || product.importPrice || '';
+                    }
+                } else {
+                    if (priceInput) priceInput.value = '';
+                    if (salePriceInput) salePriceInput.value = '';
+                }
+            }
+
+            parsePurchaseNumber(value) {
+                const digits = String(value || '').replace(/[^\d-]/g, '');
+                const number = parseInt(digits, 10);
+                return Number.isFinite(number) ? number : 0;
+            }
+
+            normalizePurchasePaymentStatus(value) {
+                const normalized = String(value || '')
+                    .trim()
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '');
+
+                if (normalized.includes('da thanh toan') || normalized === 'paid' || normalized === '1' || normalized === 'yes') {
+                    return 'Đã thanh toán';
+                }
+                return 'Chưa thanh toán';
+            }
+
+            normalizePurchaseDate(value) {
+                const raw = String(value || '').trim();
+                if (!raw) return this.formatDateInputValue(this.getVietnamTime());
+                if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+
+                const yearFirstMatch = raw.match(/^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})/);
+                if (yearFirstMatch) {
+                    const year = yearFirstMatch[1];
+                    const month = yearFirstMatch[2].padStart(2, '0');
+                    const day = yearFirstMatch[3].padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                }
+
+                const match = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+                if (match) {
+                    const day = match[1].padStart(2, '0');
+                    const month = match[2].padStart(2, '0');
+                    const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+                    return `${year}-${month}-${day}`;
+                }
+
+                if (/^\d{4,6}(\.\d+)?$/.test(raw)) {
+                    const serial = Math.floor(Number(raw));
+                    const date = new Date(Date.UTC(1899, 11, 30 + serial));
+                    const year = date.getUTCFullYear();
+                    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+                    const day = String(date.getUTCDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                }
+
+                return raw;
+            }
+
+            findOrCreatePurchaseSupplier(supplierCode, supplierName) {
+                const cleanCode = String(supplierCode || '').trim();
+                const cleanName = String(supplierName || '').trim();
+                let supplier = null;
+
+                if (cleanCode) {
+                    supplier = this.demoData.suppliers.find(s => s.id === cleanCode);
+                }
+                if (!supplier && cleanName) {
+                    supplier = this.demoData.suppliers.find(s => s.name.toLowerCase() === cleanName.toLowerCase());
+                }
+                if (supplier) return supplier;
+                if (!cleanCode && !cleanName) return null;
+
+                supplier = {
+                    id: cleanCode || this.getNextRecordCode('NCC', this.demoData.suppliers),
+                    name: cleanName || cleanCode,
+                    type: 'doanh-nghiep',
+                    phone: '',
+                    email: '',
+                    address: '',
+                    products: '',
+                    notes: 'Tạo từ upload đơn mua'
+                };
+                this.demoData.suppliers.push(supplier);
+                return supplier;
+            }
+
+            findOrCreatePurchaseProduct(item, supplier, purchaseId = null) {
+                const productCode = String(item.productCode || '').trim();
+                const productName = String(item.productName || '').trim();
+                let product = null;
+
+                if (productCode) {
+                    product = this.demoData.products.find(p => p.id === productCode);
+                }
+                if (!product && productName) {
+                    product = this.demoData.products.find(p => p.name.toLowerCase() === productName.toLowerCase());
+                }
+                if (!product && !productName) return null;
+
+                if (!product) {
+                    product = {
+                        id: productCode || this.getNextRecordCode('SP', this.demoData.products),
+                        name: productName,
+                        category: item.category || 'Nhập mới',
+                        importPrice: item.importPrice,
+                        price: item.salePrice > 0 ? item.salePrice : item.importPrice,
+                        stock: 0,
+                        minStock: 10,
+                        supplier: supplier.id,
+                        purchasedQty: 0,
+                        soldQty: 0,
+                        createdFromPurchaseId: purchaseId
+                    };
+                    this.demoData.products.push(product);
+                    return { product, createdProduct: true };
+                }
+
+                product.importPrice = item.importPrice;
+                product.supplier = supplier.id;
+                if (item.category && (!product.category || product.category === 'Nhập mới')) {
+                    product.category = item.category;
+                }
+                if (item.salePrice > 0) {
+                    product.price = item.salePrice;
+                }
+                if (typeof product.purchasedQty === 'undefined') product.purchasedQty = 0;
+                if (typeof product.soldQty === 'undefined') product.soldQty = 0;
+                return { product, createdProduct: false };
+            }
+
+            recordPurchaseExpense(purchase, supplierName, source = 'manual') {
+                const amount = Number(purchase?.total) || 0;
+                if (amount <= 0) return null;
+
+                const category = 'Chi phí mua hàng';
+                if (!Array.isArray(this.demoData.expenses)) this.demoData.expenses = [];
+                if (!Array.isArray(this.demoData.expenseCategories)) this.demoData.expenseCategories = this.getDefaultExpenseCategories();
+                if (!this.demoData.expenseCategories.includes(category)) {
+                    this.demoData.expenseCategories.push(category);
+                }
+
+                const existingIndex = this.demoData.expenses.findIndex(expense =>
+                    expense.category === category && (expense.referenceCode === purchase.id || expense.purchaseId === purchase.id)
+                );
+
+                const expense = {
+                    id: existingIndex >= 0 ? this.demoData.expenses[existingIndex].id : `CPMH${Date.now()}_${purchase.id}`,
+                    date: purchase.date || this.formatDateInputValue(this.getVietnamTime()),
+                    category,
+                    amount,
+                    paymentMethod: purchase.paymentStatus === 'Đã thanh toán' ? 'Tiền mặt' : 'Công nợ',
+                    payee: supplierName || purchase.supplierName || '',
+                    notes: `Ghi nhận chi phí mua hàng từ đơn ${purchase.id}${purchase.notes ? ` - ${purchase.notes}` : ''}`,
+                    referenceCode: purchase.id,
+                    purchaseId: purchase.id,
+                    source,
+                    createdAt: this.getVietnamTime().toISOString()
+                };
+
+                if (existingIndex >= 0) {
+                    this.demoData.expenses[existingIndex] = expense;
+                } else {
+                    this.demoData.expenses.unshift(expense);
+                }
+                return expense;
+            }
+
+            getPurchaseItemProduct(item) {
+                const itemProductId = item.productId || item.id || item.productCode;
+                if (itemProductId) {
+                    const byId = this.demoData.products.find(product => product.id === itemProductId);
+                    if (byId) return byId;
+                }
+
+                const itemName = String(item.name || item.productName || '').trim().toLowerCase();
+                if (!itemName) return null;
+                return this.demoData.products.find(product => String(product.name || '').trim().toLowerCase() === itemName) || null;
+            }
+
+            getPurchaseStockStatus(purchase) {
+                if (purchase.stockStatus) return purchase.stockStatus;
+                if (purchase.stockImported === true || purchase.inventoryStatus === 'Đã nhập kho') return 'Đã nhập kho';
+
+                const hasInventoryHistory = (this.demoData.inventoryHistory || []).some(entry => {
+                    const linkedByReference = entry.referenceCode === purchase.id || entry.purchaseId === purchase.id;
+                    const linkedByNotes = entry.type === 'purchase' && String(entry.notes || '').includes(purchase.id);
+                    return linkedByReference || linkedByNotes;
+                });
+                return hasInventoryHistory ? 'Đã nhập kho' : 'Chưa nhập kho';
+            }
+
+            hasPurchaseStockImport(purchase) {
+                return this.getPurchaseStockStatus(purchase) === 'Đã nhập kho';
+            }
+
+            applyPurchaseStockImport(purchase, source = 'update') {
+                if (!purchase) return { importedItems: 0, createdProducts: 0 };
+
+                if (this.hasPurchaseStockImport(purchase)) {
+                    purchase.stockStatus = 'Đã nhập kho';
+                    purchase.stockImported = true;
+                    if (purchase.status !== 'Hủy') purchase.status = purchase.status || 'Đã nhận hàng';
+                    this.recordPurchaseExpense(purchase, purchase.supplierName || purchase.supplier, source);
+                    return { importedItems: 0, createdProducts: 0 };
+                }
+
+                let importedItems = 0;
+                let createdProducts = 0;
+                purchase.products = Array.isArray(purchase.products) ? purchase.products : [];
+
+                purchase.products.forEach(item => {
+                    const quantity = Number(item.quantity) || 0;
+                    if (quantity <= 0) return;
+
+                    let product = this.getPurchaseItemProduct(item);
+                    let createdProduct = false;
+                    const itemName = String(item.name || item.productName || '').trim();
+                    const itemPrice = Number(item.price) || 0;
+
+                    if (!product) {
+                        product = {
+                            id: item.productId || item.id || item.productCode || this.getNextRecordCode('SP', this.demoData.products),
+                            name: itemName || `Sản phẩm ${purchase.id}`,
+                            category: item.category || 'Nhập mới',
+                            importPrice: itemPrice,
+                            price: Number(item.salePrice) || itemPrice,
+                            stock: 0,
+                            minStock: 10,
+                            supplier: purchase.supplierId || '',
+                            purchasedQty: 0,
+                            soldQty: 0,
+                            createdFromPurchaseId: purchase.id
+                        };
+                        this.demoData.products.push(product);
+                        createdProduct = true;
+                        createdProducts++;
+                    }
+
+                    const oldStock = Number(product.stock) || 0;
+                    if (typeof item.previousStock === 'undefined') item.previousStock = oldStock;
+                    if (typeof item.previousImportPrice === 'undefined') item.previousImportPrice = product.importPrice;
+                    if (typeof item.previousSupplier === 'undefined') item.previousSupplier = product.supplier;
+                    if (typeof item.previousPurchasedQty === 'undefined') item.previousPurchasedQty = Number(product.purchasedQty) || 0;
+
+                    product.stock = oldStock + quantity;
+                    product.importPrice = itemPrice || product.importPrice || 0;
+                    product.supplier = purchase.supplierId || product.supplier || '';
+                    product.purchasedQty = (Number(product.purchasedQty) || 0) + quantity;
+                    if (typeof product.soldQty === 'undefined') product.soldQty = 0;
+
+                    item.productId = product.id;
+                    item.id = product.id;
+                    item.productCode = product.id;
+                    item.name = product.name;
+                    item.price = itemPrice || product.importPrice || 0;
+                    item.total = quantity * (Number(item.price) || 0);
+                    item.createdProduct = item.createdProduct || createdProduct;
+
+                    this.addInventoryHistory({
+                        type: 'purchase',
+                        productId: product.id,
+                        productCode: product.id,
+                        productName: product.name,
+                        quantity,
+                        oldStock,
+                        newStock: product.stock,
+                        date: purchase.date || this.formatDateInputValue(this.getVietnamTime()),
+                        time: this.formatTimeNow(),
+                        reason: `Nhập hàng từ ${purchase.supplierName || purchase.supplier || 'nhà cung cấp'}`,
+                        referenceCode: purchase.id,
+                        supplierId: purchase.supplierId || '',
+                        supplierName: purchase.supplierName || purchase.supplier || '',
+                        notes: purchase.notes || ''
+                    });
+                    importedItems++;
+                });
+
+                purchase.total = purchase.products.reduce((sum, item) => sum + ((Number(item.quantity) || 0) * (Number(item.price) || 0)), 0);
+                purchase.status = 'Đã nhận hàng';
+                purchase.stockStatus = 'Đã nhập kho';
+                purchase.stockImported = true;
+                this.recordPurchaseExpense(purchase, purchase.supplierName || purchase.supplier, source);
+
+                return { importedItems, createdProducts };
+            }
+
+            getPurchaseRollbackWarnings(purchase) {
+                return (purchase.products || []).reduce((warnings, item) => {
+                    const product = this.getPurchaseItemProduct(item);
+                    const quantity = Number(item.quantity) || 0;
+                    if (!product) {
+                        warnings.push(`Không tìm thấy sản phẩm ${item.name || item.productName || item.productId || item.id || ''}`);
+                        return warnings;
+                    }
+
+                    const currentStock = Number(product.stock) || 0;
+                    if (quantity > currentStock) {
+                        warnings.push(`${product.name}: tồn hiện tại ${currentStock}, cần thu hồi ${quantity}`);
+                    }
+                    return warnings;
+                }, []);
+            }
+
+            isProductUsedOutsidePurchase(product, purchaseId) {
+                const matchesProduct = item =>
+                    item?.productId === product.id ||
+                    item?.id === product.id ||
+                    item?.productCode === product.id ||
+                    String(item?.name || item?.productName || '').trim().toLowerCase() === String(product.name || '').trim().toLowerCase();
+
+                const usedInOtherPurchase = (this.demoData.purchases || []).some(purchase =>
+                    purchase.id !== purchaseId && (purchase.products || []).some(matchesProduct)
+                );
+                if (usedInOtherPurchase) return true;
+
+                const usedInOrders = (this.demoData.orders || []).some(order =>
+                    (order.products || []).some(matchesProduct)
+                );
+                if (usedInOrders) return true;
+
+                return (this.demoData.inventoryHistory || []).some(entry => {
+                    const sameProduct =
+                        entry.productId === product.id ||
+                        entry.productCode === product.id ||
+                        String(entry.productName || '').trim().toLowerCase() === String(product.name || '').trim().toLowerCase();
+                    return sameProduct && entry.referenceCode !== purchaseId;
+                });
+            }
+
+            rollbackPurchaseOrderEffects(purchase, options = {}) {
+                if (!purchase) return { success: false, message: 'Không tìm thấy đơn mua' };
+
+                const purchaseId = purchase.id;
+                const productRollback = [];
+                const removableProductIds = new Set();
+
+                (purchase.products || []).forEach(item => {
+                    const product = this.getPurchaseItemProduct(item);
+                    const quantity = Number(item.quantity) || 0;
+                    if (!product || quantity <= 0) return;
+
+                    const oldStock = Number(product.stock) || 0;
+                    product.stock = oldStock - quantity;
+                    const currentPurchasedQty = Number(product.purchasedQty) || 0;
+                    const previousPurchasedQty = Number(item.previousPurchasedQty);
+                    const expectedPurchasedQty = Number.isFinite(previousPurchasedQty) ? previousPurchasedQty + quantity : null;
+                    product.purchasedQty = expectedPurchasedQty !== null && currentPurchasedQty === expectedPurchasedQty
+                        ? previousPurchasedQty
+                        : Math.max(0, currentPurchasedQty - quantity);
+
+                    if (item.previousImportPrice !== undefined && item.previousImportPrice !== null && (Number(product.importPrice) || 0) === (Number(item.price) || 0)) {
+                        product.importPrice = item.previousImportPrice;
+                    }
+                    if (item.previousSupplier !== undefined && item.previousSupplier !== null && product.supplier === purchase.supplierId) {
+                        product.supplier = item.previousSupplier;
+                    }
+
+                    productRollback.push({
+                        name: product.name,
+                        quantity,
+                        oldStock,
+                        newStock: product.stock
+                    });
+
+                    if (item.createdProduct || product.createdFromPurchaseId === purchaseId) {
+                        removableProductIds.add(product.id);
+                    }
+                });
+
+                const historyBefore = (this.demoData.inventoryHistory || []).length;
+                this.demoData.inventoryHistory = (this.demoData.inventoryHistory || []).filter(entry => {
+                    const linkedByReference = entry.referenceCode === purchaseId || entry.purchaseId === purchaseId;
+                    const linkedByNotes = entry.type === 'purchase' && String(entry.notes || '').includes(purchaseId);
+                    return !(linkedByReference || linkedByNotes);
+                });
+                const removedHistoryCount = historyBefore - this.demoData.inventoryHistory.length;
+
+                const expensesBefore = (this.demoData.expenses || []).length;
+                this.demoData.expenses = (this.demoData.expenses || []).filter(expense => {
+                    const linkedByReference = expense.referenceCode === purchaseId || expense.purchaseId === purchaseId;
+                    const linkedByNotes = expense.category === 'Chi phí mua hàng' && String(expense.notes || '').includes(purchaseId);
+                    return !(linkedByReference || linkedByNotes);
+                });
+                const removedExpenseCount = expensesBefore - this.demoData.expenses.length;
+
+                let removedProductCount = 0;
+                removableProductIds.forEach(productId => {
+                    const product = this.demoData.products.find(item => item.id === productId);
+                    if (!product) return;
+
+                    if ((Number(product.stock) || 0) <= 0 && (Number(product.soldQty) || 0) === 0 && !this.isProductUsedOutsidePurchase(product, purchaseId)) {
+                        this.demoData.products = this.demoData.products.filter(item => item.id !== productId);
+                        removedProductCount++;
+                    }
+                });
+
+                if (options.removePurchase !== false) {
+                    this.demoData.purchases = (this.demoData.purchases || []).filter(item => item.id !== purchaseId);
+                } else {
+                    purchase.stockStatus = 'Chưa nhập kho';
+                    purchase.stockImported = false;
+                }
+
+                return {
+                    success: true,
+                    productRollback,
+                    removedHistoryCount,
+                    removedExpenseCount,
+                    removedProductCount
+                };
+            }
+
+            deletePurchaseOrder(purchaseId) {
+                const purchase = (this.demoData.purchases || []).find(item => item.id === purchaseId);
+                if (!purchase) {
+                    this.showNotification('Không tìm thấy đơn mua cần xóa', 'error');
+                    return;
+                }
+
+                const warnings = this.getPurchaseRollbackWarnings(purchase);
+                let message = `Xóa đơn mua ${purchase.id} và thu hồi tồn kho, lưu lượng tồn kho, chi phí mua hàng liên quan?`;
+                if (warnings.length > 0) {
+                    message += `\n\nCảnh báo tồn kho:\n${warnings.join('\n')}\n\nTiếp tục có thể làm tồn kho âm để phản ánh việc thu hồi đơn mua.`;
+                }
+                if (!confirm(message)) return;
+
+                const result = this.rollbackPurchaseOrderEffects(purchase, { removePurchase: true });
+                if (!result.success) {
+                    this.showNotification(result.message || 'Không thể thu hồi đơn mua', 'error');
+                    return;
+                }
+
+                this.saveToLocalStorage();
+                this.showNotification(
+                    `Đã xóa ${purchase.id}: thu hồi ${result.productRollback.length} sản phẩm, xóa ${result.removedHistoryCount} dòng lưu lượng kho, xóa ${result.removedExpenseCount} chi phí mua hàng`,
+                    'success'
+                );
+                this.loadPage('purchases');
+            }
+
+            deleteAllPurchases() {
+                if (!confirm('Bạn có chắc chắn muốn xóa tất cả đơn mua hàng?')) return;
+
+                const warnings = (this.demoData.purchases || []).flatMap(purchase =>
+                    this.getPurchaseRollbackWarnings(purchase).map(warning => `${purchase.id}: ${warning}`)
+                );
+                let confirmMessage = 'XÁC NHẬN: Xóa tất cả đơn mua sẽ thu hồi tồn kho, lưu lượng tồn kho và chi phí mua hàng liên quan. Hành động này không thể hoàn tác.';
+                if (warnings.length > 0) {
+                    confirmMessage += `\n\nCảnh báo tồn kho:\n${warnings.slice(0, 10).join('\n')}`;
+                    if (warnings.length > 10) confirmMessage += `\n... và ${warnings.length - 10} cảnh báo khác`;
+                }
+                if (!confirm(confirmMessage)) return;
+
+                const purchases = [...(this.demoData.purchases || [])];
+                const totals = purchases.reduce((summary, purchase) => {
+                    const result = this.rollbackPurchaseOrderEffects(purchase, { removePurchase: true });
+                    if (result.success) {
+                        summary.products += result.productRollback.length;
+                        summary.history += result.removedHistoryCount;
+                        summary.expenses += result.removedExpenseCount;
+                    }
+                    return summary;
+                }, { products: 0, history: 0, expenses: 0 });
+
+                this.saveToLocalStorage();
+                this.showNotification(`Đã xóa tất cả đơn mua và thu hồi ${totals.products} sản phẩm, ${totals.history} dòng lưu lượng kho, ${totals.expenses} chi phí mua hàng`, 'success');
+                this.loadPage('purchases');
+            }
+
+            showCreatePurchaseForm() {
+                const supplierOptions = this.demoData.suppliers.map(s =>
+                    `<option value="${s.id}">${s.name}</option>`
+                ).join('');
+
+                const productOptions = this.demoData.products.map(p =>
+                    `<option value="${p.id}">${p.id} - ${p.name} (Tồn: ${p.stock || 0}, giá nhập: ${(p.importPrice || 0).toLocaleString('vi-VN')} VNĐ)</option>`
+                ).join('');
+
+                const today = this.formatDateInputValue(this.getVietnamTime());
+                const categoryOptions = this.getCategoryOptions ? this.getCategoryOptions() : '<option value="Nhập mới">Nhập mới</option>';
+
+                const formHTML = `
+                    <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center; padding: 16px;" onclick="closeModal(this)">
+                        <div style="background: white; padding: 28px; border-radius: 12px; width: 720px; max-width: 96vw; max-height: 92vh; overflow-y: auto;" onclick="event.stopPropagation()">
+                            <h3 style="margin-bottom: 20px; color: var(--text-primary);">Tạo đơn mua và nhập kho</h3>
+                            <form onsubmit="app.createPurchaseOrder(event)">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Nhà cung cấp:</label>
+                                        <select name="supplier" required style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="">Chọn nhà cung cấp</option>
+                                            ${supplierOptions}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Ngày mua:</label>
+                                        <input type="date" name="date" value="${today}" required style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                </div>
+
+                                <div style="margin-bottom: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Sản phẩm:</label>
+                                    <select name="productId" required onchange="app.togglePurchaseProductFields(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                        <option value="">Chọn sản phẩm</option>
+                                        ${productOptions}
+                                        <option value="__new__">+ Tạo sản phẩm mới</option>
+                                    </select>
+                                </div>
+
+                                <div data-purchase-new-product-fields style="display: none; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                                    <div style="margin-bottom: 16px;">
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Tên sản phẩm mới:</label>
+                                        <input type="text" name="newProductName" data-required="true" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                        <div>
+                                            <label style="display: block; margin-bottom: 8px; font-weight: 600;">Danh mục:</label>
+                                            <select name="category" data-required="true" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                                ${categoryOptions}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style="display: block; margin-bottom: 8px; font-weight: 600;">Tồn tối thiểu:</label>
+                                            <input type="number" name="minStock" value="10" min="0" data-required="true" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Số lượng nhập:</label>
+                                        <input type="number" name="quantity" required min="1" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá nhập:</label>
+                                        <input type="number" name="price" required min="0" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá bán:</label>
+                                        <input type="number" name="salePrice" min="0" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                </div>
+
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Thanh toán:</label>
+                                        <select name="paymentStatus" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                            <option value="Chưa thanh toán">Chưa thanh toán</option>
+                                            <option value="Đã thanh toán">Đã thanh toán</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Ghi chú:</label>
+                                        <input type="text" name="notes" placeholder="Số hóa đơn, ghi chú nhập hàng..." style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                </div>
+
+                                <div style="background: #ecfdf5; border: 1px solid #10b981; color: #065f46; border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 14px;">
+                                    Đơn mua sẽ được ghi nhận là đã nhận hàng và tăng tồn kho ngay sau khi tạo.
+                                </div>
+
+                                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                                    <button type="button" onclick="closeModal(this.closest('div[style*=fixed]'))"
+                                            style="padding: 12px 24px; border: 2px solid #e5e7eb; background: white; border-radius: 8px; cursor: pointer;">Hủy</button>
+                                    <button type="submit"
+                                            style="padding: 12px 24px; background: var(--primary-blue); color: white; border: none; border-radius: 8px; cursor: pointer;">Tạo đơn mua</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', formHTML);
+            }
+
+            createPurchaseOrder(event) {
+                event.preventDefault();
+                const form = event.target;
+                const formData = new FormData(form);
+                const createdAt = new Date().toISOString();
+
+                const supplier = this.demoData.suppliers.find(s => s.id === formData.get('supplier'));
+                const selectedProductId = formData.get('productId');
+                const quantity = parseInt(formData.get('quantity'), 10);
+                const importPrice = parseInt(formData.get('price'), 10);
+                const salePrice = parseInt(formData.get('salePrice'), 10);
+                const purchaseDate = formData.get('date') || this.formatDateInputValue(this.getVietnamTime());
+                const paymentStatus = formData.get('paymentStatus') || 'Chưa thanh toán';
+                const notes = formData.get('notes') || '';
+
+                if (!supplier) {
+                    this.showNotification('Vui lòng chọn nhà cung cấp', 'error');
+                    return;
+                }
+                if (!Number.isFinite(quantity) || quantity <= 0) {
+                    this.showNotification('Số lượng nhập không hợp lệ', 'error');
+                    return;
+                }
+                if (!Number.isFinite(importPrice) || importPrice < 0) {
+                    this.showNotification('Giá nhập không hợp lệ', 'error');
+                    return;
+                }
+
+                let product = null;
+                let createdNewProduct = false;
+
+                if (selectedProductId === '__new__') {
+                    const newProductName = String(formData.get('newProductName') || '').trim();
+                    if (!newProductName) {
+                        this.showNotification('Vui lòng nhập tên sản phẩm mới', 'error');
+                        return;
+                    }
+
+                    product = this.demoData.products.find(p => p.name.toLowerCase() === newProductName.toLowerCase());
+                    if (!product) {
+                        product = {
+                            id: this.getNextRecordCode('SP', this.demoData.products),
+                            name: newProductName,
+                            category: formData.get('category') || 'Nhập mới',
+                            importPrice,
+                            price: Number.isFinite(salePrice) && salePrice > 0 ? salePrice : importPrice,
+                            stock: 0,
+                            minStock: parseInt(formData.get('minStock'), 10) || 10,
+                            supplier: supplier.id,
+                            purchasedQty: 0,
+                            soldQty: 0
+                        };
+                        this.demoData.products.push(product);
+                        createdNewProduct = true;
+                    }
+                } else {
+                    product = this.demoData.products.find(p => p.id === selectedProductId);
+                }
+
+                if (!product) {
+                    this.showNotification('Không tìm thấy sản phẩm để nhập kho', 'error');
+                    return;
+                }
+
+                const oldStock = Number(product.stock) || 0;
+                const previousImportPrice = createdNewProduct ? null : product.importPrice;
+                const previousSupplier = createdNewProduct ? null : product.supplier;
+                const previousPurchasedQty = createdNewProduct ? 0 : (Number(product.purchasedQty) || 0);
+                product.stock = oldStock + quantity;
+                product.importPrice = importPrice;
+                product.supplier = supplier.id;
+                product.purchasedQty = (Number(product.purchasedQty) || 0) + quantity;
+                if (Number.isFinite(salePrice) && salePrice > 0 && createdNewProduct) {
+                    product.price = salePrice;
+                }
+                if (typeof product.soldQty === 'undefined') {
+                    product.soldQty = 0;
+                }
+
+                const purchaseId = this.getNextRecordCode('PH', this.demoData.purchases);
+                const total = quantity * importPrice;
+                if (createdNewProduct) {
+                    product.createdFromPurchaseId = purchaseId;
+                }
+                const purchase = {
+                    id: purchaseId,
+                    supplierId: supplier.id,
+                    supplierName: supplier.name,
+                    date: purchaseDate,
+                    time: this.getVietnamTime().toLocaleTimeString('vi-VN', { hour12: false }),
+                    products: [{
+                        productId: product.id,
+                        id: product.id,
+                        name: product.name,
+                        quantity,
+                        price: importPrice,
+                        total,
+                        createdProduct: createdNewProduct,
+                        previousStock: oldStock,
+                        previousImportPrice,
+                        previousSupplier,
+                        previousPurchasedQty
+                    }],
+                    total,
+                    status: 'Đã nhận hàng',
+                    paymentStatus,
+                    notes,
+                    stockStatus: 'Đã nhập kho',
+                    stockImported: true,
+                    createdAt
+                };
+                this.demoData.purchases.push(purchase);
+
+                this.addInventoryHistory({
+                    type: 'purchase',
+                    productId: product.id,
+                    productCode: product.id,
+                    productName: product.name,
+                    quantity,
+                    oldStock,
+                    newStock: product.stock,
+                    date: purchaseDate,
+                    time: this.formatTimeNow(),
+                    reason: `Nhập hàng từ ${supplier.name}`,
+                    referenceCode: purchaseId,
+                    supplierId: supplier.id,
+                    supplierName: supplier.name,
+                    notes
+                });
+
+                this.recordPurchaseExpense(purchase, supplier.name, 'manual');
+                this.saveToLocalStorage();
+                this.showNotification(`Đã tạo đơn mua ${purchaseId} và nhập ${quantity} ${product.name}. Tồn kho mới: ${product.stock}`, 'success');
+                this.loadPage('purchases');
+                const modal = form.closest("div[style*=\"fixed\"]"); if (modal) modal.remove();
+            }
+
+            showUploadPurchasesForm() {
+                const formHTML = `
+                    <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center; padding: 16px;" onclick="closeModal(this)">
+                        <div style="background: white; padding: 32px; border-radius: 12px; width: 760px; max-width: 96vw; max-height: 92vh; overflow-y: auto;" onclick="event.stopPropagation()">
+                            <h3 style="margin-bottom: 24px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                                <span>📤</span> Upload file Excel đơn mua
+                            </h3>
+
+                            <div style="background: #f0f9ff; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #0ea5e9;">
+                                <h4 style="margin: 0 0 8px 0; color: #0c4a6e;">📋 Định dạng file CSV xuất từ Excel:</h4>
+                                <p style="margin: 0; font-size: 14px; line-height: 1.5;">
+                                    File có các cột theo thứ tự:<br>
+                                    <strong>Mã PH | Ngày | Mã NCC | Tên NCC | Mã SP | Tên sản phẩm | Danh mục | Giá bán | Giá nhập | Số lượng | Thanh toán | Ghi chú</strong>
+                                </p>
+                                <p style="margin: 8px 0 0 0; font-size: 13px; color: #475569;">
+                                    Các dòng cùng Mã PH sẽ được gom vào một đơn mua nhiều sản phẩm. Nếu bỏ trống Mã PH, hệ thống tự tạo một đơn cho từng dòng.
+                                </p>
+                            </div>
+
+                            <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin-bottom: 20px; overflow-x: auto;">
+                                <h4 style="margin: 0 0 8px 0; color: #374151;">💡 Ví dụ:</h4>
+                                <table style="width: 100%; min-width: 720px; border-collapse: collapse; font-size: 12px;">
+                                    <thead>
+                                        <tr style="background: #e5e7eb;">
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Mã PH</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Ngày</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Mã NCC</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Tên NCC</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Mã SP</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Tên sản phẩm</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Danh mục</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Giá bán</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Giá nhập</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Số lượng</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Thanh toán</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Ghi chú</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">PH101</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">2026-05-25</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">NCC001</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">Nhà cung cấp A</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">SP001</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">Áo thun</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">Thời trang</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">150000</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">100000</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">20</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">Đã thanh toán</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">Nhập lô đầu</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <form onsubmit="app.uploadPurchasesFromExcel(event)">
+                                <div style="margin-bottom: 20px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Chọn file Excel/CSV: *</label>
+                                    <input type="file" name="excelFile" accept=".csv,.xlsx,.xls" required
+                                           style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    <p style="margin: 4px 0 0 0; font-size: 12px; color: #6b7280;">Khuyến nghị dùng file .csv xuất từ Excel để hệ thống đọc chính xác.</p>
+                                </div>
+
+                                <div style="background: #ecfdf5; border: 1px solid #10b981; color: #065f46; border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 14px;">
+                                    Trình tự xử lý: tạo đơn mua → nhập hàng → điều chỉnh tồn kho → ghi nhận chi phí mua hàng.
+                                </div>
+
+                                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                                    <button type="button" onclick="closeModal(this.closest('div[style*=fixed]'))"
+                                            style="padding: 12px 24px; border: 2px solid #e5e7eb; background: white; border-radius: 8px; cursor: pointer;">Hủy</button>
+                                    <button type="submit"
+                                            style="padding: 12px 24px; background: var(--primary-blue); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">Upload Excel</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', formHTML);
+            }
+
+            uploadPurchasesFromExcel(event) {
+                event.preventDefault();
+                const form = event.target;
+                const fileInput = form.querySelector('input[type="file"]');
+
+                if (!fileInput.files[0]) {
+                    this.showNotification('Vui lòng chọn file Excel/CSV đơn mua', 'error');
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        let csvData = e.target.result;
+                        if (csvData.charCodeAt(0) === 0xFEFF) {
+                            csvData = csvData.slice(1);
+                        }
+
+                        const lines = csvData.split('\n').filter(line => line.trim());
+                        if (lines.length < 2) {
+                            this.showNotification('File phải có ít nhất 1 dòng tiêu đề và 1 dòng dữ liệu', 'error');
+                            return;
+                        }
+
+                        const groups = new Map();
+                        const errorLines = [];
+
+                        lines.slice(1).forEach((line, index) => {
+                            const columns = this.parseCSVLine(line);
+                            if (columns.length < 10) {
+                                errorLines.push(`Dòng ${index + 2}: Không đủ cột dữ liệu`);
+                                return;
+                            }
+
+                            const [
+                                rawPurchaseId,
+                                rawDate,
+                                supplierCode,
+                                supplierName,
+                                productCode,
+                                productName,
+                                category,
+                                salePrice,
+                                importPrice,
+                                quantity,
+                                paymentStatus,
+                                notes
+                            ] = columns;
+
+                            const cleanProductName = String(productName || '').trim();
+                            const cleanProductCode = String(productCode || '').trim();
+                            const parsedQuantity = this.parsePurchaseNumber(quantity);
+                            const parsedImportPrice = this.parsePurchaseNumber(importPrice);
+                            const parsedSalePrice = this.parsePurchaseNumber(salePrice);
+
+                            if (!cleanProductCode && !cleanProductName) {
+                                errorLines.push(`Dòng ${index + 2}: Thiếu mã hoặc tên sản phẩm`);
+                                return;
+                            }
+                            if (parsedQuantity <= 0) {
+                                errorLines.push(`Dòng ${index + 2}: Số lượng phải lớn hơn 0`);
+                                return;
+                            }
+                            if (parsedImportPrice <= 0) {
+                                errorLines.push(`Dòng ${index + 2}: Giá nhập phải lớn hơn 0`);
+                                return;
+                            }
+
+                            const explicitPurchaseId = String(rawPurchaseId || '').trim();
+                            const groupKey = explicitPurchaseId || `__row_${index}`;
+                            if (!groups.has(groupKey)) {
+                                groups.set(groupKey, {
+                                    explicitPurchaseId,
+                                    date: this.normalizePurchaseDate(rawDate),
+                                    supplierCode: String(supplierCode || '').trim(),
+                                    supplierName: String(supplierName || '').trim(),
+                                    paymentStatus: this.normalizePurchasePaymentStatus(paymentStatus),
+                                    notes: String(notes || '').trim(),
+                                    items: []
+                                });
+                            }
+
+                            groups.get(groupKey).items.push({
+                                productCode: cleanProductCode,
+                                productName: cleanProductName,
+                                category: String(category || '').trim() || 'Nhập mới',
+                                salePrice: parsedSalePrice,
+                                importPrice: parsedImportPrice,
+                                quantity: parsedQuantity
+                            });
+                        });
+
+                        let purchaseCount = 0;
+                        let itemCount = 0;
+                        let skippedCount = 0;
+                        const suppliersBefore = this.demoData.suppliers.length;
+                        const productsBefore = this.demoData.products.length;
+
+                        groups.forEach(group => {
+                            const purchaseId = group.explicitPurchaseId || this.getNextRecordCode('PH', this.demoData.purchases);
+                            if (this.demoData.purchases.some(purchase => purchase.id === purchaseId)) {
+                                skippedCount++;
+                                errorLines.push(`Đơn ${purchaseId}: Đã tồn tại nên bỏ qua`);
+                                return;
+                            }
+
+                            const supplier = this.findOrCreatePurchaseSupplier(group.supplierCode, group.supplierName);
+                            if (!supplier) {
+                                skippedCount++;
+                                errorLines.push(`Đơn ${purchaseId}: Thiếu nhà cung cấp`);
+                                return;
+                            }
+
+                            const purchase = {
+                                id: purchaseId,
+                                supplierId: supplier.id,
+                                supplierName: supplier.name,
+                                date: group.date,
+                                time: this.getVietnamTime().toLocaleTimeString('vi-VN', { hour12: false }),
+                                products: [],
+                                total: 0,
+                                status: 'Đang chờ',
+                                paymentStatus: group.paymentStatus,
+                                notes: group.notes,
+                                stockStatus: 'Chưa nhập kho',
+                                stockImported: false,
+                                createdAt: new Date().toISOString()
+                            };
+
+                            this.demoData.purchases.push(purchase);
+
+                            group.items.forEach(item => {
+                                const productResult = this.findOrCreatePurchaseProduct(item, supplier, purchaseId);
+                                const product = productResult?.product;
+                                if (!product) {
+                                    errorLines.push(`Đơn ${purchaseId}: Không tạo được sản phẩm ${item.productName || item.productCode}`);
+                                    return;
+                                }
+
+                                const oldStock = Number(product.stock) || 0;
+                                const previousImportPrice = productResult.createdProduct ? null : product.importPrice;
+                                const previousSupplier = productResult.createdProduct ? null : product.supplier;
+                                const previousPurchasedQty = productResult.createdProduct ? 0 : (Number(product.purchasedQty) || 0);
+                                product.stock = oldStock + item.quantity;
+                                product.purchasedQty = (Number(product.purchasedQty) || 0) + item.quantity;
+                                product.importPrice = item.importPrice;
+                                product.supplier = supplier.id;
+
+                                const lineTotal = item.quantity * item.importPrice;
+                                purchase.products.push({
+                                    productId: product.id,
+                                    id: product.id,
+                                    name: product.name,
+                                    quantity: item.quantity,
+                                    price: item.importPrice,
+                                    total: lineTotal,
+                                    createdProduct: !!productResult.createdProduct,
+                                    previousStock: oldStock,
+                                    previousImportPrice,
+                                    previousSupplier,
+                                    previousPurchasedQty
+                                });
+                                purchase.total += lineTotal;
+
+                                this.addInventoryHistory({
+                                    type: 'purchase',
+                                    productId: product.id,
+                                    productCode: product.id,
+                                    productName: product.name,
+                                    quantity: item.quantity,
+                                    oldStock,
+                                    newStock: product.stock,
+                                    date: group.date,
+                                    time: this.formatTimeNow(),
+                                    reason: `Nhập hàng từ ${supplier.name}`,
+                                    referenceCode: purchaseId,
+                                    supplierId: supplier.id,
+                                    supplierName: supplier.name,
+                                    notes: group.notes
+                                });
+                                itemCount++;
+                            });
+
+                            if (purchase.products.length === 0) {
+                                this.demoData.purchases = this.demoData.purchases.filter(item => item.id !== purchaseId);
+                                skippedCount++;
+                                return;
+                            }
+
+                            purchase.status = 'Đã nhận hàng';
+                            purchase.stockStatus = 'Đã nhập kho';
+                            purchase.stockImported = true;
+                            this.recordPurchaseExpense(purchase, supplier.name, 'upload');
+                            purchaseCount++;
+                        });
+
+                        if (purchaseCount > 0 || itemCount > 0) {
+                            this.saveToLocalStorage();
+                            localStorage.removeItem('erp_vietnam_empty_mode');
+                            this.loadPage('purchases');
+                        }
+
+                        const createdSuppliers = this.demoData.suppliers.length - suppliersBefore;
+                        const createdProducts = this.demoData.products.length - productsBefore;
+                        let message = `Upload hoàn tất: ${purchaseCount} đơn mua, ${itemCount} dòng nhập hàng`;
+                        if (createdProducts > 0) message += `, tạo ${createdProducts} sản phẩm mới`;
+                        if (createdSuppliers > 0) message += `, tạo ${createdSuppliers} nhà cung cấp mới`;
+                        if (skippedCount > 0) message += `, bỏ qua ${skippedCount} đơn`;
+                        if (errorLines.length > 0) {
+                            message += `\n\nChi tiết:\n${errorLines.slice(0, 8).join('\n')}`;
+                        }
+
+                        this.showNotification(message, purchaseCount > 0 ? 'success' : 'warning');
+                        const modal = form.closest("div[style*=\"fixed\"]");
+                        if (modal) modal.remove();
+                    } catch (error) {
+                        console.error('Lỗi đọc file Excel đơn mua:', error);
+                        this.showNotification(`Lỗi đọc file Excel đơn mua: ${error.message}`, 'error');
+                    }
+                };
+
+                reader.readAsText(fileInput.files[0], 'UTF-8');
             }
 
             // Categories Management
@@ -12571,15 +14055,19 @@ window._supabaseData = null
                 // Mặc định là đầu tháng này (giờ Việt Nam)
                 const vietnamTime = this.getVietnamTime();
                 vietnamTime.setDate(1);
-                return vietnamTime.toISOString().split('T')[0];
+                return this.formatDateInputValue(vietnamTime);
             }
 
             getDefaultToDate() {
                 // Mặc định là hôm nay (giờ Việt Nam)
-                return this.getVietnamTime().toISOString().split('T')[0];
+                return this.formatDateInputValue(this.getVietnamTime());
             }
 
             formatDateForDisplay(dateString) {
+                if (/^\d{4}-\d{2}-\d{2}$/.test(String(dateString || ''))) {
+                    const [year, month, day] = dateString.split('-');
+                    return `${day}/${month}/${year}`;
+                }
                 const date = new Date(dateString);
                 return date.toLocaleDateString('vi-VN');
             }

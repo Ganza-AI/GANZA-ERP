@@ -5,6 +5,13 @@ import { supabase } from './supabaseClient.js'
 // Module này cung cấp tất cả hàm giao tiếp với Supabase Database
 // ============================================================
 
+function getLocalDateString(date = new Date()) {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+
 // ==================== CUSTOMERS ====================
 
 export async function getCustomers() {
@@ -578,13 +585,23 @@ export async function loadAllData() {
         supplierName: p.supplier_name || '',
         date: p.date,
         products: (p.purchase_items || []).map(item => ({
+            id: item.product_code || '',
+            productId: item.product_code || '',
+            productCode: item.product_code || '',
             name: item.product_name,
             quantity: item.quantity,
-            price: Number(item.price) || 0
+            price: Number(item.price) || 0,
+            createdProduct: !!item.created_product,
+            previousStock: item.previous_stock ?? null,
+            previousImportPrice: item.previous_import_price ?? null,
+            previousSupplier: item.previous_supplier ?? null,
+            previousPurchasedQty: item.previous_purchased_qty ?? null
         })),
         total: Number(p.total) || 0,
         status: p.status || 'Đang chờ',
-        paymentStatus: p.payment_status || 'Chưa thanh toán'
+        paymentStatus: p.payment_status || 'Chưa thanh toán',
+        createdAt: p.created_at || '',
+        updatedAt: p.updated_at || ''
     }))
 
     const mappedInventoryHistory = inventoryHistory.map(h => {
@@ -645,6 +662,7 @@ export async function loadAllData() {
     const expenseCategories = Array.from(new Set([
         'Lương',
         'Thuê kho',
+        'Chi phí mua hàng',
         'Vận chuyển',
         'Marketing',
         'Điện nước',
@@ -711,6 +729,18 @@ function isMissingPaymentTrackingColumn(error) {
 function isMissingExpensesTable(error) {
     const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
     return error?.code === '42P01' || error?.code === 'PGRST205' || (message.includes('expenses') && message.includes('schema cache'))
+}
+
+function isMissingPurchaseItemTrackingColumn(error) {
+    const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+    const mentionsPurchaseItemColumn =
+        message.includes('product_code') ||
+        message.includes('created_product') ||
+        message.includes('previous_stock') ||
+        message.includes('previous_import_price') ||
+        message.includes('previous_supplier') ||
+        message.includes('previous_purchased_qty')
+    return mentionsPurchaseItemColumn && (error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column'))
 }
 
 /**
@@ -953,11 +983,12 @@ async function _performSync(demoData) {
                     code: purchase.id,
                     supplier_id: supplierId,
                     supplier_name: purchase.supplierName || null,
-                    date: purchase.date || new Date().toISOString().split('T')[0],
+                    date: purchase.date || getLocalDateString(),
                     total: purchase.total || 0,
                     status: purchase.status || 'Đang chờ',
                     payment_status: purchase.paymentStatus || 'Chưa thanh toán'
                 }
+                if (purchase.createdAt) purchaseData.created_at = purchase.createdAt
 
                 const { data: upsertedPurchase, error: purchaseErr } = await supabase
                     .from('purchases')
@@ -979,14 +1010,29 @@ async function _performSync(demoData) {
                     if (purchase.products && purchase.products.length > 0) {
                         const items = purchase.products.map(p => ({
                             purchase_id: upsertedPurchase.id,
+                            product_code: p.productId || p.id || p.productCode || null,
                             product_name: p.name,
                             quantity: p.quantity || 1,
-                            price: p.price || 0
+                            price: p.price || 0,
+                            created_product: !!p.createdProduct,
+                            previous_stock: p.previousStock ?? null,
+                            previous_import_price: p.previousImportPrice ?? null,
+                            previous_supplier: p.previousSupplier ?? null,
+                            previous_purchased_qty: p.previousPurchasedQty ?? null
                         }))
                         const { error: itemsErr } = await supabase
                             .from('purchase_items')
                             .insert(items)
-                        if (itemsErr) errors.push({ table: 'purchase_items', error: itemsErr })
+                        if (itemsErr && isMissingPurchaseItemTrackingColumn(itemsErr)) {
+                            console.warn('⚠️ Supabase purchase_items table is missing rollback tracking columns. Run supabase_purchase_item_tracking_migration.sql to persist purchase rollback metadata.')
+                            const fallbackItems = items.map(({ product_code, created_product, previous_stock, previous_import_price, previous_supplier, previous_purchased_qty, ...item }) => item)
+                            const { error: fallbackItemsErr } = await supabase
+                                .from('purchase_items')
+                                .insert(fallbackItems)
+                            if (fallbackItemsErr) errors.push({ table: 'purchase_items', error: fallbackItemsErr })
+                        } else if (itemsErr) {
+                            errors.push({ table: 'purchase_items', error: itemsErr })
+                        }
                     }
                 }
             }
@@ -1065,6 +1111,12 @@ async function _performSync(demoData) {
                     }
                 }
             }
+        }
+        const currentInventoryHistoryIds = (demoData.inventoryHistory || [])
+            .map(h => h._supabaseId || (isUuid(h.id) ? h.id : null))
+            .filter(Boolean)
+        if ((demoData.inventoryHistory || []).length === 0 || currentInventoryHistoryIds.length > 0) {
+            await _deleteRemovedRecordsById('inventory_history', currentInventoryHistoryIds)
         }
 
         // 9. Sync Deliveries
@@ -1148,6 +1200,36 @@ async function _deleteRemovedRecords(table, codeField, currentCodes) {
                     .from(table)
                     .delete()
                     .in(codeField, removedCodes)
+            }
+        }
+    } catch (err) {
+        console.warn(`⚠️ Error deleting removed records from ${table}:`, err)
+    }
+}
+
+function isUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''))
+}
+
+async function _deleteRemovedRecordsById(table, currentIds) {
+    try {
+        if (currentIds.length === 0) {
+            await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000')
+            return
+        }
+
+        const { data: existingRows } = await supabase
+            .from(table)
+            .select('id')
+        if (existingRows) {
+            const removedIds = existingRows
+                .map(r => r.id)
+                .filter(id => !currentIds.includes(id))
+            if (removedIds.length > 0) {
+                await supabase
+                    .from(table)
+                    .delete()
+                    .in('id', removedIds)
             }
         }
     } catch (err) {
