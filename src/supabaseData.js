@@ -539,7 +539,8 @@ export async function loadAllData() {
         minStock: p.min_stock || 5,
         supplier: p.supplier_code || '',
         soldQty: p.sold_qty || 0,
-        purchasedQty: p.purchased_qty || 0
+        purchasedQty: p.purchased_qty || 0,
+        expiryDate: p.expiry_date || ''
     }))
 
     const mappedCategories = categories.map(c => ({
@@ -693,6 +694,7 @@ export async function loadAllData() {
 // Debounce timer
 let _syncTimer = null
 let _isSyncing = false
+let _productExpiryColumnAvailable = true
 let _paymentTrackingColumnsAvailable = true
 let _expensesTableAvailable = true
 
@@ -724,6 +726,11 @@ function isMissingPaymentTrackingColumn(error) {
         message.includes('paid_amount') ||
         message.includes('remaining_balance')
     return mentionsPaymentColumn && (error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column'))
+}
+
+function isMissingProductExpiryColumn(error) {
+    const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+    return message.includes('expiry_date') && (error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column'))
 }
 
 function isMissingExpensesTable(error) {
@@ -859,22 +866,40 @@ async function _performSync(demoData) {
 
         // 4. Sync Products
         if (demoData.products && demoData.products.length > 0) {
-            const productsData = demoData.products.map(p => ({
-                code: p.id,
-                name: p.name,
-                category: p.category || null,
-                price: p.price || 0,
-                import_price: p.importPrice || 0,
-                stock: p.stock || 0,
-                min_stock: p.minStock || 5,
-                supplier_code: p.supplier || null,
-                sold_qty: p.soldQty || 0,
-                purchased_qty: p.purchasedQty || 0
-            }))
+            const productsData = demoData.products.map(p => {
+                const product = {
+                    code: p.id,
+                    name: p.name,
+                    category: p.category || null,
+                    price: p.price || 0,
+                    import_price: p.importPrice || 0,
+                    stock: p.stock || 0,
+                    min_stock: p.minStock || 5,
+                    supplier_code: p.supplier || null,
+                    sold_qty: p.soldQty || 0,
+                    purchased_qty: p.purchasedQty || 0
+                }
+                if (_productExpiryColumnAvailable) {
+                    product.expiry_date = p.expiryDate || null
+                }
+                return product
+            })
             const { error } = await supabase
                 .from('products')
                 .upsert(productsData, { onConflict: 'code' })
-            if (error) errors.push({ table: 'products', error })
+            if (error) {
+                if (_productExpiryColumnAvailable && isMissingProductExpiryColumn(error)) {
+                    _productExpiryColumnAvailable = false
+                    console.warn('⚠️ Supabase products table is missing expiry_date. Run supabase_product_expiry_migration.sql to persist product expiry dates.')
+                    const fallbackProductsData = productsData.map(({ expiry_date, ...product }) => product)
+                    const { error: fallbackError } = await supabase
+                        .from('products')
+                        .upsert(fallbackProductsData, { onConflict: 'code' })
+                    if (fallbackError) errors.push({ table: 'products', error: fallbackError })
+                } else {
+                    errors.push({ table: 'products', error })
+                }
+            }
         }
         await _deleteRemovedRecords('products', 'code', demoData.products?.map(p => p.id) || [])
 

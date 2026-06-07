@@ -196,6 +196,11 @@ window._supabaseData = null
                             product.purchasedQty = 0;
                             needsSave = true;
                         }
+                        const normalizedExpiryDate = this.normalizeProductExpiryDate(product.expiryDate || product.expiry_date || product.expirationDate || product.expiry || '');
+                        if (product.expiryDate !== normalizedExpiryDate) {
+                            product.expiryDate = normalizedExpiryDate;
+                            needsSave = true;
+                        }
                     });
                 }
 
@@ -498,6 +503,116 @@ window._supabaseData = null
                 const month = String(date.getMonth() + 1).padStart(2, '0');
                 const day = String(date.getDate()).padStart(2, '0');
                 return `${year}-${month}-${day}`;
+            }
+
+            parseDateInputValue(value) {
+                const raw = String(value || '').trim();
+                const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                if (match) {
+                    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+                }
+
+                const parsedDate = new Date(raw);
+                return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+            }
+
+            normalizeProductExpiryDate(value) {
+                const raw = String(value || '').trim();
+                if (!raw) return '';
+                if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+
+                const yearFirstMatch = raw.match(/^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})/);
+                if (yearFirstMatch) {
+                    const year = yearFirstMatch[1];
+                    const month = yearFirstMatch[2].padStart(2, '0');
+                    const day = yearFirstMatch[3].padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                }
+
+                const dayFirstMatch = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+                if (dayFirstMatch) {
+                    const day = dayFirstMatch[1].padStart(2, '0');
+                    const month = dayFirstMatch[2].padStart(2, '0');
+                    const year = dayFirstMatch[3].length === 2 ? `20${dayFirstMatch[3]}` : dayFirstMatch[3];
+                    return `${year}-${month}-${day}`;
+                }
+
+                if (/^\d{4,6}(\.\d+)?$/.test(raw)) {
+                    const serial = Math.floor(Number(raw));
+                    if (serial > 20000) {
+                        const date = new Date(Date.UTC(1899, 11, 30 + serial));
+                        const year = date.getUTCFullYear();
+                        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+                        const day = String(date.getUTCDate()).padStart(2, '0');
+                        return `${year}-${month}-${day}`;
+                    }
+                }
+
+                return raw;
+            }
+
+            getProductExpiryInfo(product) {
+                const expiryDate = this.normalizeProductExpiryDate(product?.expiryDate || product?.expiry_date || product?.expirationDate || product?.expiry || '');
+                if (!expiryDate) return null;
+
+                const expiry = this.parseDateInputValue(expiryDate);
+                const today = this.parseDateInputValue(this.formatDateInputValue(this.getVietnamTime()));
+                if (!expiry || !today) return null;
+
+                const alertThreshold = new Date(today);
+                alertThreshold.setMonth(alertThreshold.getMonth() + 3);
+                const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+                const isExpired = daysLeft < 0;
+                const isDueSoon = !isExpired && expiry <= alertThreshold;
+
+                return {
+                    expiryDate,
+                    daysLeft,
+                    isExpired,
+                    isDueSoon,
+                    shouldAlert: isExpired || isDueSoon,
+                    displayDate: this.formatDateForDisplay(expiryDate),
+                    statusText: isExpired ? `Đã hết hạn ${Math.abs(daysLeft)} ngày` : `Còn ${daysLeft} ngày`,
+                    statusColor: isExpired ? '#dc2626' : isDueSoon ? '#d97706' : '#059669',
+                    statusIcon: isExpired ? '⛔' : isDueSoon ? '⏳' : '✅'
+                };
+            }
+
+            getProductExpiryAlerts() {
+                return (this.demoData.products || [])
+                    .map(product => ({ product, info: this.getProductExpiryInfo(product) }))
+                    .filter(item => item.info?.shouldAlert)
+                    .sort((a, b) => a.info.daysLeft - b.info.daysLeft);
+            }
+
+            renderProductExpiryAlerts(limit = 8) {
+                const alerts = this.getProductExpiryAlerts();
+                if (alerts.length === 0) return '';
+
+                const visibleAlerts = alerts.slice(0, limit);
+                return `
+                    <div style="background: #fff7ed; border: 2px solid #fb923c; border-radius: 8px; padding: 18px; margin-bottom: 24px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;">
+                            <div>
+                                <h3 style="margin: 0; color: #9a3412; font-size: 18px;">Nhắc hạn sử dụng sản phẩm</h3>
+                                <p style="margin: 4px 0 0 0; color: #9a3412; font-size: 13px;">${alerts.length} sản phẩm đã hết hạn hoặc còn dưới 3 tháng.</p>
+                            </div>
+                            <button onclick="app.loadPage('products')" style="background: #ea580c; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: 600;">Xem sản phẩm</button>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px;">
+                            ${visibleAlerts.map(({ product, info }) => `
+                                <div style="background: white; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px;">
+                                    <div style="display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+                                        <strong style="color: #1f2937;">${product.name}</strong>
+                                        <span style="color: ${info.statusColor}; font-weight: 700;">${info.statusIcon}</span>
+                                    </div>
+                                    <div style="font-size: 13px; color: #4b5563;">${product.id} · HSD: ${info.displayDate}</div>
+                                    <div style="font-size: 13px; color: ${info.statusColor}; font-weight: 700; margin-top: 4px;">${info.statusText}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
             }
 
             getExpensePeriodRange(period = 'month') {
@@ -1214,6 +1329,8 @@ window._supabaseData = null
                             </div>
                         </div>
 
+                        ${this.renderProductExpiryAlerts()}
+
                         <!-- Quick Actions -->
                         <div class="quick-actions">
                             <h2 class="section-title">Thao tác nhanh</h2>
@@ -1394,20 +1511,24 @@ window._supabaseData = null
             }
 
             getProductsContent() {
-                const productsTable = this.demoData.products.map((product, index) => `
-                    <div class="activity-item">
+                const productsTable = this.demoData.products.map((product, index) => {
+                    const expiryInfo = this.getProductExpiryInfo(product);
+                    return `
+                    <div class="activity-item" ondblclick="app.showEditProductForm('${product.id}')" title="Nhấp đúp để chỉnh sửa sản phẩm" style="cursor: pointer;">
                         <div class="activity-icon ${product.stock < 10 ? 'warning' : 'success'}">📦</div>
                         <div class="activity-content">
                             <div class="activity-title">${product.name} (${product.id})</div>
                             <div class="activity-desc">💰 Bán: ${product.price.toLocaleString('vi-VN')} VNĐ | 💸 Nhập: ${product.importPrice?.toLocaleString('vi-VN') || 'N/A'} VNĐ | 📂 ${product.category}</div>
                             <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">📥 Đã mua: ${product.purchasedQty || 0} | 📤 Đã bán: ${product.soldQty || 0}</div>
+                            ${expiryInfo ? `<div style="font-size: 12px; color: ${expiryInfo.statusColor}; margin-top: 4px; font-weight: 600;">${expiryInfo.statusIcon} HSD: ${expiryInfo.displayDate} · ${expiryInfo.statusText}</div>` : '<div style="font-size: 12px; color: #6b7280; margin-top: 4px;">⏳ HSD: Chưa nhập</div>'}
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <div class="activity-time">Tồn: ${product.stock} ${product.stock < 10 ? '⚠️' : '✅'}</div>
-                            <button onclick="app.deleteProduct(${index})" style="background: #ef4444; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Xóa</button>
+                            <button onclick="event.stopPropagation(); app.deleteProduct(${index})" ondblclick="event.stopPropagation()" style="background: #ef4444; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Xóa</button>
                         </div>
                     </div>
-                `).join('');
+                `;
+                }).join('');
 
                 return `
                     <div class="fade-in">
@@ -1573,12 +1694,13 @@ window._supabaseData = null
                             </div>
 
                             <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                                <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; background: #f8fafc; font-weight: 600; color: #374151; border-bottom: 1px solid #e5e7eb;">
+                                <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; background: #f8fafc; font-weight: 600; color: #374151; border-bottom: 1px solid #e5e7eb;">
                                     <div>Sản phẩm</div>
                                     <div>Giá bán</div>
                                     <div>Tồn kho</div>
                                     <div>Tối thiểu</div>
                                     <div>Trạng thái</div>
+                                    <div>HSD</div>
                                     <div>Thao tác</div>
                                 </div>
                                 ${this.demoData.products.map((product, index) => {
@@ -1586,9 +1708,10 @@ window._supabaseData = null
                                     const statusColor = stockStatus === 'out' ? '#ef4444' : stockStatus === 'low' ? '#ef4444' : stockStatus === 'warning' ? '#f59e0b' : '#10b981';
                                     const statusText = stockStatus === 'out' ? 'Hết hàng' : stockStatus === 'low' ? 'Sắp hết' : stockStatus === 'warning' ? 'Ít hàng' : 'Đủ hàng';
                                     const statusIcon = stockStatus === 'out' ? '🚫' : stockStatus === 'low' ? '⚠️' : stockStatus === 'warning' ? '⚡' : '✅';
+                                    const expiryInfo = this.getProductExpiryInfo(product);
 
                                     return `
-                                        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; border-bottom: 1px solid #f1f5f9; align-items: center; ${index % 2 === 0 ? 'background: #fafbfc;' : 'background: white;'}">
+                                        <div ondblclick="app.showEditProductForm('${product.id}')" title="Nhấp đúp để chỉnh sửa sản phẩm" style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; border-bottom: 1px solid #f1f5f9; align-items: center; cursor: pointer; ${index % 2 === 0 ? 'background: #fafbfc;' : 'background: white;'}">
                                             <div>
                                                 <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">${product.name}</div>
                                                 <div style="font-size: 12px; color: #6b7280;">${product.id} • ${product.category}</div>
@@ -1606,7 +1729,10 @@ window._supabaseData = null
                                                 <span style="font-size: 16px;">${statusIcon}</span>
                                                 <span style="color: ${statusColor}; font-weight: 500; font-size: 13px;">${statusText}</span>
                                             </div>
-                                            <button onclick="app.showProductDetail('${product.id}')" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 500;">
+                                            <div style="color: ${expiryInfo ? expiryInfo.statusColor : '#6b7280'}; font-size: 13px; font-weight: ${expiryInfo?.shouldAlert ? '700' : '500'};">
+                                                ${expiryInfo ? `${expiryInfo.statusIcon} ${expiryInfo.displayDate}` : '-'}
+                                            </div>
+                                            <button onclick="event.stopPropagation(); app.showProductDetail('${product.id}')" ondblclick="event.stopPropagation()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 500;">
                                                 Chi tiết
                                             </button>
                                         </div>
@@ -4509,7 +4635,7 @@ window._supabaseData = null
                 }
 
                 // Tạo dữ liệu Excel với tiêu đề tiếng Việt
-                const headers = ['Mã SP', 'Tên sản phẩm', 'Danh mục', 'Giá bán', 'Giá nhập', 'Tồn kho', 'Nhà cung cấp'];
+                const headers = ['Mã SP', 'Tên sản phẩm', 'Danh mục', 'Giá bán', 'Giá nhập', 'Tồn kho', 'Nhà cung cấp', 'Hạn sử dụng'];
                 const excelData = [headers];
 
                 this.demoData.products.forEach(product => {
@@ -4520,7 +4646,8 @@ window._supabaseData = null
                         product.price,
                         product.importPrice || '',
                         product.stock,
-                        product.supplier || ''
+                        product.supplier || '',
+                        product.expiryDate || ''
                     ]);
                 });
 
@@ -4750,7 +4877,7 @@ window._supabaseData = null
                                 <h4 style="margin: 0 0 8px 0; color: #0c4a6e;">📋 Định dạng file Excel:</h4>
                                 <p style="margin: 0; font-size: 14px; line-height: 1.5;">
                                     File Excel phải có các cột theo thứ tự:<br>
-                                    <strong>Mã SP | Tên sản phẩm | Danh mục | Giá bán | Giá nhập | Tồn kho | Nhà cung cấp</strong>
+                                    <strong>Mã SP | Tên sản phẩm | Danh mục | Giá bán | Giá nhập | Tồn kho | Nhà cung cấp | Hạn sử dụng</strong>
                                 </p>
                             </div>
 
@@ -4767,6 +4894,7 @@ window._supabaseData = null
                                             <th style="padding: 4px; border: 1px solid #d1d5db;">Giá nhập</th>
                                             <th style="padding: 4px; border: 1px solid #d1d5db;">Tồn kho</th>
                                             <th style="padding: 4px; border: 1px solid #d1d5db;">Nhà cung cấp</th>
+                                            <th style="padding: 4px; border: 1px solid #d1d5db;">Hạn sử dụng</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -4778,6 +4906,7 @@ window._supabaseData = null
                                             <td style="padding: 4px; border: 1px solid #d1d5db;">100000</td>
                                             <td style="padding: 4px; border: 1px solid #d1d5db;">50</td>
                                             <td style="padding: 4px; border: 1px solid #d1d5db;">NCC ABC</td>
+                                            <td style="padding: 4px; border: 1px solid #d1d5db;">2026-12-31</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -4878,7 +5007,7 @@ window._supabaseData = null
                                 return;
                             }
 
-                            const [id, name, category, price, importPrice, stock, supplier] = columns;
+                            const [id, name, category, price, importPrice, stock, supplier, expiryDate] = columns;
 
                             // Kiểm tra dữ liệu bắt buộc
                             if (!id?.trim() || !name?.trim() || !category?.trim() || !price?.trim()) {
@@ -4901,12 +5030,18 @@ window._supabaseData = null
                                 stock: parseInt(stock) || 0,
                                 supplier: supplier ? supplier.trim() : ''
                             };
+                            if (typeof expiryDate !== 'undefined') {
+                                productData.expiryDate = this.normalizeProductExpiryDate(expiryDate);
+                            }
 
                             console.log('Product data created:', productData);
 
                             if (existingIndex !== -1) {
                                 if (duplicateAction === 'update') {
-                                    this.demoData.products[existingIndex] = productData;
+                                    this.demoData.products[existingIndex] = {
+                                        ...this.demoData.products[existingIndex],
+                                        ...productData
+                                    };
                                     updatedCount++;
                                     console.log('Updated existing product:', cleanId);
                                 } else {
@@ -6188,10 +6323,14 @@ window._supabaseData = null
                                         <input type="number" name="minStock" value="10" required min="0" style="width: 100%; padding: 12px; border: 2px solid #f59e0b; border-radius: 8px;" placeholder="Cảnh báo khi dưới...">
                                     </div>
                                 </div>
+                                <div style="margin-bottom: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Hạn sử dụng:</label>
+                                    <input type="date" name="expiryDate" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                </div>
                                 <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
                                     <div style="display: flex; align-items: center; gap: 8px; color: #92400e; font-size: 14px;">
                                         <span>💡</span>
-                                        <span><strong>Mẹo:</strong> Hệ thống sẽ cảnh báo khi tồn kho thấp hơn hoặc bằng ngưỡng tối thiểu</span>
+                                        <span><strong>Mẹo:</strong> Hệ thống sẽ cảnh báo khi tồn kho thấp hoặc sản phẩm còn dưới 3 tháng hạn sử dụng</span>
                                     </div>
                                 </div>
                                 <div style="margin-bottom: 24px;">
@@ -6227,7 +6366,8 @@ window._supabaseData = null
                     price: parseInt(formData.get('price')),
                     stock: parseInt(formData.get('stock')),
                     minStock: parseInt(formData.get('minStock')),
-                    supplier: formData.get('supplier')
+                    supplier: formData.get('supplier'),
+                    expiryDate: this.normalizeProductExpiryDate(formData.get('expiryDate'))
                 };
 
                 this.demoData.products.push(newProduct);
@@ -6290,6 +6430,10 @@ window._supabaseData = null
                                         <span><strong>Mẹo:</strong> Hệ thống sẽ cảnh báo khi tồn kho thấp hơn hoặc bằng ngưỡng tối thiểu</span>
                                     </div>
                                 </div>
+                                <div style="margin-bottom: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Hạn sử dụng:</label>
+                                    <input type="date" name="expiryDate" value="${product.expiryDate || ''}" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                </div>
                                 <div style="margin-bottom: 24px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Nhà cung cấp:</label>
                                     <select name="supplier" required style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
@@ -6331,7 +6475,8 @@ window._supabaseData = null
                     price: parseInt(formData.get('price')),
                     stock: parseInt(formData.get('stock')),
                     minStock: parseInt(formData.get('minStock')),
-                    supplier: formData.get('supplier')
+                    supplier: formData.get('supplier'),
+                    expiryDate: this.normalizeProductExpiryDate(formData.get('expiryDate'))
                 };
 
                 this.saveToLocalStorage();
@@ -8567,6 +8712,7 @@ window._supabaseData = null
                 const profitPercent = product.importPrice ? ((profit / product.importPrice) * 100).toFixed(1) : 0;
                 const totalValue = product.price * product.stock;
                 const totalCost = product.importPrice ? product.importPrice * product.stock : 0;
+                const expiryInfo = this.getProductExpiryInfo(product);
 
                 const detailHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="closeModal(this)">
@@ -8580,6 +8726,7 @@ window._supabaseData = null
                                     <p><strong>Tên:</strong> ${product.name}</p>
                                     <p><strong>Danh mục:</strong> ${product.category}</p>
                                     <p><strong>Nhà cung cấp:</strong> ${product.supplier || 'N/A'}</p>
+                                    <p><strong>Hạn sử dụng:</strong> ${expiryInfo ? `<span style="color: ${expiryInfo.statusColor}; font-weight: 700;">${expiryInfo.displayDate} · ${expiryInfo.statusText}</span>` : 'Chưa nhập'}</p>
                                 </div>
 
                                 <div style="background: #f0f9ff; padding: 16px; border-radius: 8px;">
@@ -10420,14 +10567,15 @@ window._supabaseData = null
                         { header: 'Giá bán (VNĐ)', getValue: product => product.price.toLocaleString('vi-VN') },
                         { header: 'Giá vốn (VNĐ)', getValue: product => (product.importPrice || 0).toLocaleString('vi-VN') },
                         { header: 'Tồn kho', getValue: product => product.stock },
+                        { header: 'Hạn sử dụng', getValue: product => product.expiryDate ? this.formatDateForDisplay(product.expiryDate) : 'N/A' },
                         { header: 'Nhà cung cấp', getValue: product => product.supplier || 'N/A' }
                     ];
                     this.showDataViewer('Danh sách sản phẩm', this.demoData.products, columns);
                 } else if (mode === 'download') {
                     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + 
-                        "Mã SP,Tên sản phẩm,Danh mục,Giá bán,Giá vốn,Tồn kho,Nhà cung cấp\n" +
+                        "Mã SP,Tên sản phẩm,Danh mục,Giá bán,Giá vốn,Tồn kho,Hạn sử dụng,Nhà cung cấp\n" +
                         this.demoData.products.map(p => 
-                            `${p.id},"${p.name}","${p.category}",${p.price},${p.importPrice || 0},${p.stock},"${p.supplier || ''}"`
+                            `${p.id},"${p.name}","${p.category}",${p.price},${p.importPrice || 0},${p.stock},"${p.expiryDate || ''}","${p.supplier || ''}"`
                         ).join('\n');
 
                     const encodedUri = encodeURI(csvContent);
@@ -14873,6 +15021,7 @@ window._supabaseData = null
                         { header: 'Giá bán (VNĐ)', getValue: product => product.price.toLocaleString('vi-VN') },
                         { header: 'Tồn kho', getValue: product => product.stock },
                         { header: 'Giá trị (VNĐ)', getValue: product => (product.price * product.stock).toLocaleString('vi-VN') },
+                        { header: 'Hạn sử dụng', getValue: product => product.expiryDate ? this.formatDateForDisplay(product.expiryDate) : 'N/A' },
                         { header: 'Nhà cung cấp', getValue: product => product.supplier || 'N/A' }
                     ];
 
@@ -14885,9 +15034,9 @@ window._supabaseData = null
                     const filterDesc = this.getInventoryFilterDescription(inventoryFilter, categoryFilter);
                     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + 
                         `Báo cáo Tồn kho - ${filterDesc}\n` +
-                        "Mã SP,Tên sản phẩm,Danh mục,Giá bán,Tồn kho,Giá trị,Nhà cung cấp\n" +
+                        "Mã SP,Tên sản phẩm,Danh mục,Giá bán,Tồn kho,Giá trị,Hạn sử dụng,Nhà cung cấp\n" +
                         filteredProducts.map(p => 
-                            `${p.id},"${p.name}","${p.category}",${p.price},${p.stock},${p.price * p.stock},"${p.supplier || ''}"`
+                            `${p.id},"${p.name}","${p.category}",${p.price},${p.stock},${p.price * p.stock},"${p.expiryDate || ''}","${p.supplier || ''}"`
                         ).join('\n');
 
                     const encodedUri = encodeURI(csvContent);

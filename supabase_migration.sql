@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     import_price NUMERIC DEFAULT 0,
     stock INTEGER DEFAULT 0,
     min_stock INTEGER DEFAULT 5,
+    expiry_date DATE,
     supplier_code TEXT,
     supplier_id UUID REFERENCES public.suppliers(id) ON DELETE SET NULL,
     sold_qty INTEGER DEFAULT 0,
@@ -150,6 +151,7 @@ ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_st
 ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_import_price NUMERIC;
 ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_supplier TEXT;
 ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS previous_purchased_qty INTEGER;
+ALTER TABLE IF EXISTS public.products ADD COLUMN IF NOT EXISTS expiry_date DATE;
 
 -- 9. BẢNG CHI PHÍ VẬN HÀNH (expenses)
 CREATE TABLE IF NOT EXISTS public.expenses (
@@ -474,6 +476,7 @@ CREATE INDEX IF NOT EXISTS idx_categories_parent ON public.categories(parent_id)
 CREATE INDEX IF NOT EXISTS idx_products_code ON public.products(code);
 CREATE INDEX IF NOT EXISTS idx_products_category ON public.products(category);
 CREATE INDEX IF NOT EXISTS idx_products_supplier ON public.products(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_products_expiry_date ON public.products(expiry_date);
 
 CREATE INDEX IF NOT EXISTS idx_orders_code ON public.orders(code);
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON public.orders(customer_id);
