@@ -1336,27 +1336,29 @@ window._supabaseData = null
                     const iconClass = customer.type === 'doanh-nghiep' ? 'warning' : 'info';
                     const iconSymbol = customer.type === 'doanh-nghiep' ? '🏢' : '👤';
 
-                    // Thông tin bổ sung cho doanh nghiệp
-                    const companyInfo = customer.type === 'doanh-nghiep' && customer.companyName ? 
-                        ` | Công ty: ${customer.companyName}` : '';
-                    const departmentInfo = customer.type === 'doanh-nghiep' && customer.department ? 
-                        ` | Phòng ban: ${customer.department}` : '';
-                    const taxCodeInfo = customer.type === 'doanh-nghiep' && customer.taxCode ? 
-                        ` | MST: ${customer.taxCode}` : '';
+                    // Thông tin cửa hàng/công ty
+                    const shopInfo = customer.companyName ? `🏪 ${customer.companyName}` : '';
+                    const departmentInfo = customer.department ? ` · ${customer.department}` : '';
+                    const taxCodeInfo = customer.taxCode ? `📋 MST: ${customer.taxCode}` : '';
+
+                    // Địa chỉ đầy đủ
+                    const addressParts = [customer.address, customer.ward, customer.district, customer.province].filter(Boolean);
+                    const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : 'Chưa có địa chỉ';
 
                     return `
-                        <div class="activity-item">
+                        <div class="activity-item" ondblclick="app.editCustomer(${index})" title="Nhấp đúp để chỉnh sửa" style="cursor: pointer;">
                             <div class="activity-icon ${iconClass}">${iconSymbol}</div>
                             <div class="activity-content">
                                 <div class="activity-title">${customer.name} (${customer.id})</div>
-                                <div class="activity-desc">${typeDisplay}${companyInfo}${departmentInfo}${taxCodeInfo}</div>
-                                <div class="activity-desc">📞 ${customer.phone} | � ${customer.address}${customer.ward ? ', ' + customer.ward : ''}${customer.district ? ', ' + customer.district : ''}${customer.province ? ', ' + customer.province : ''}</div>
+                                <div class="activity-desc">${typeDisplay}${shopInfo ? ' | ' + shopInfo : ''}${departmentInfo}</div>
+                                <div class="activity-desc">📞 ${customer.phone || 'N/A'} | 📍 ${fullAddress}</div>
+                                ${taxCodeInfo ? `<div style="font-size: 12px; color: #6b7280; margin-top: 2px;">${taxCodeInfo}</div>` : ''}
                             </div>
                             <div style="display: flex; gap: 8px; align-items: center;">
                                 <div class="activity-time">${customer.type === 'doanh-nghiep' ? 'Doanh nghiệp' : 'Cá nhân'}</div>
-                                <button onclick="app.showCustomerDetails(${index})" style="background: #059669; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Chi tiết</button>
-                                <button onclick="app.editCustomer(${index})" style="background: #3b82f6; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Sửa</button>
-                                <button onclick="app.deleteCustomer(${index})" style="background: #ef4444; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Xóa</button>
+                                <button onclick="event.stopPropagation(); app.showCustomerDetails(${index})" ondblclick="event.stopPropagation()" style="background: #059669; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Chi tiết</button>
+                                <button onclick="event.stopPropagation(); app.editCustomer(${index})" ondblclick="event.stopPropagation()" style="background: #3b82f6; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Sửa</button>
+                                <button onclick="event.stopPropagation(); app.deleteCustomer(${index})" ondblclick="event.stopPropagation()" style="background: #ef4444; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Xóa</button>
                             </div>
                         </div>
                     `;
@@ -3882,19 +3884,17 @@ window._supabaseData = null
                                     </div>
                                 </div>
 
-                                <!-- Hàng 2: Tên công ty và Phòng ban (ẩn/hiện) -->
-                                <div id="add-company-field" style="margin-bottom: 16px; display: none;">
-                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                                        <div>
-                                            <label style="display: block; margin-bottom: 8px; font-weight: 600;">Tên công ty: *</label>
-                                            <input type="text" name="companyName" 
-                                                   style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
-                                        </div>
-                                        <div>
-                                            <label style="display: block; margin-bottom: 8px; font-weight: 600;">Phòng ban:</label>
-                                            <input type="text" name="department" placeholder="VD: Phòng kế toán, Phòng kinh doanh..."
-                                                   style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
-                                        </div>
+                                <!-- Hàng 2: Tên cửa hàng/công ty và Phòng ban -->
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">🏪 Tên cửa hàng / Công ty:</label>
+                                        <input type="text" name="companyName" placeholder="VD: Cửa hàng ABC, Công ty TNHH XYZ..."
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                    <div id="add-company-field" style="display: none;">
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Phòng ban:</label>
+                                        <input type="text" name="department" placeholder="VD: Phòng kế toán, Phòng kinh doanh..."
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                     </div>
                                 </div>
 
@@ -3905,9 +3905,9 @@ window._supabaseData = null
                                         <input type="tel" name="phone" required 
                                                style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                     </div>
-                                    <div id="add-tax-field" style="display: none;">
-                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Mã số thuế:</label>
-                                        <input type="text" name="taxCode"
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">📋 Mã số thuế:</label>
+                                        <input type="text" name="taxCode" placeholder="VD: 0123456789"
                                                style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                     </div>
                                 </div>
@@ -3959,23 +3959,14 @@ window._supabaseData = null
             }
 
             toggleAddCustomerFields(customerType) {
-                const companyField = document.getElementById('add-company-field');
-                const taxField = document.getElementById('add-tax-field');
-                const companyInput = document.querySelector('input[name="companyName"]');
+                const departmentField = document.getElementById('add-company-field');
 
                 if (customerType === 'doanh-nghiep') {
-                    companyField.style.display = 'block';
-                    taxField.style.display = 'block';
-                    companyInput.required = true;
+                    if (departmentField) departmentField.style.display = 'block';
                 } else {
-                    companyField.style.display = 'none';
-                    taxField.style.display = 'none';
-                    if (companyInput) {
-                        companyInput.required = false;
-                        companyInput.value = '';
-                    }
-                    const taxInput = document.querySelector('input[name="taxCode"]');
-                    if (taxInput) taxInput.value = '';
+                    if (departmentField) departmentField.style.display = 'none';
+                    const deptInput = document.querySelector('input[name="department"]');
+                    if (deptInput) deptInput.value = '';
                 }
             }
 
@@ -4035,19 +4026,17 @@ window._supabaseData = null
                                     </div>
                                 </div>
 
-                                <!-- Hàng 2: Tên công ty và Phòng ban (ẩn/hiện) -->
-                                <div id="edit-company-field" style="margin-bottom: 16px; display: ${companyDisplay};">
-                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                                        <div>
-                                            <label style="display: block; margin-bottom: 8px; font-weight: 600;">Tên công ty: *</label>
-                                            <input type="text" name="companyName" value="${customer.companyName || ''}"
-                                                   style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
-                                        </div>
-                                        <div>
-                                            <label style="display: block; margin-bottom: 8px; font-weight: 600;">Phòng ban:</label>
-                                            <input type="text" name="department" value="${customer.department || ''}" placeholder="VD: Phòng kế toán, Phòng kinh doanh..."
-                                                   style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
-                                        </div>
+                                <!-- Hàng 2: Tên cửa hàng/công ty và Phòng ban -->
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">🏪 Tên cửa hàng / Công ty:</label>
+                                        <input type="text" name="companyName" value="${customer.companyName || ''}" placeholder="VD: Cửa hàng ABC, Công ty TNHH XYZ..."
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                    </div>
+                                    <div id="edit-company-field" style="display: ${companyDisplay};">
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Phòng ban:</label>
+                                        <input type="text" name="department" value="${customer.department || ''}" placeholder="VD: Phòng kế toán, Phòng kinh doanh..."
+                                               style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                     </div>
                                 </div>
 
@@ -4058,9 +4047,9 @@ window._supabaseData = null
                                         <input type="tel" name="phone" value="${customer.phone}" required 
                                                style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                     </div>
-                                    <div id="edit-tax-field" style="display: ${taxDisplay};">
-                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Mã số thuế:</label>
-                                        <input type="text" name="taxCode" value="${customer.taxCode || ''}"
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">📋 Mã số thuế:</label>
+                                        <input type="text" name="taxCode" value="${customer.taxCode || ''}" placeholder="VD: 0123456789"
                                                style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                     </div>
                                 </div>
@@ -4112,23 +4101,14 @@ window._supabaseData = null
             }
 
             toggleEditCustomerFields(customerType) {
-                const companyField = document.getElementById('edit-company-field');
-                const taxField = document.getElementById('edit-tax-field');
-                const companyInput = document.querySelector('input[name="companyName"]');
+                const departmentField = document.getElementById('edit-company-field');
 
                 if (customerType === 'doanh-nghiep') {
-                    companyField.style.display = 'block';
-                    taxField.style.display = 'block';
-                    if (companyInput) companyInput.required = true;
+                    if (departmentField) departmentField.style.display = 'block';
                 } else {
-                    companyField.style.display = 'none';
-                    taxField.style.display = 'none';
-                    if (companyInput) {
-                        companyInput.required = false;
-                        companyInput.value = '';
-                    }
-                    const taxInput = document.querySelector('input[name="taxCode"]');
-                    if (taxInput) taxInput.value = '';
+                    if (departmentField) departmentField.style.display = 'none';
+                    const deptInput = departmentField?.querySelector('input[name="department"]');
+                    if (deptInput) deptInput.value = '';
                 }
             }
 
