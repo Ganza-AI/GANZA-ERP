@@ -500,6 +500,68 @@ window._supabaseData = null
                 return `${year}-${month}-${day}`;
             }
 
+            getProductExpiryInfo(product) {
+                if (!product.expiryDate) return null;
+                const today = this.getVietnamTime();
+                today.setHours(0, 0, 0, 0);
+                const expiry = new Date(product.expiryDate);
+                expiry.setHours(0, 0, 0, 0);
+                const diffTime = expiry - today;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                const diffMonths = diffDays / 30;
+                const displayDate = expiry.toLocaleDateString('vi-VN');
+
+                if (diffDays < 0) {
+                    return { statusText: `Đã hết hạn ${Math.abs(diffDays)} ngày`, statusColor: '#dc2626', statusIcon: '🔴', displayDate, diffDays, expired: true };
+                } else if (diffDays === 0) {
+                    return { statusText: 'Hết hạn hôm nay!', statusColor: '#dc2626', statusIcon: '🔴', displayDate, diffDays, expired: true };
+                } else if (diffMonths <= 1) {
+                    return { statusText: `Còn ${diffDays} ngày`, statusColor: '#ea580c', statusIcon: '🟠', displayDate, diffDays, expired: false };
+                } else if (diffMonths <= 3) {
+                    return { statusText: `Còn ${Math.floor(diffMonths)} tháng ${diffDays % 30} ngày`, statusColor: '#f59e0b', statusIcon: '🟡', displayDate, diffDays, expired: false };
+                } else {
+                    return { statusText: `Còn ${Math.floor(diffMonths)} tháng`, statusColor: '#10b981', statusIcon: '🟢', displayDate, diffDays, expired: false };
+                }
+            }
+
+            renderProductExpiryAlerts() {
+                const alerts = this.demoData.products
+                    .map(product => ({ product, info: this.getProductExpiryInfo(product) }))
+                    .filter(({ info }) => info && (info.expired || info.diffDays <= 90))
+                    .sort((a, b) => a.info.diffDays - b.info.diffDays);
+
+                if (alerts.length === 0) return '';
+
+                const maxVisible = 6;
+                const visibleAlerts = alerts.slice(0, maxVisible);
+                const hiddenCount = alerts.length - maxVisible;
+
+                return `
+                    <div style="background: linear-gradient(135deg, #fff7ed 0%, #fed7aa 100%); border: 2px solid #ea580c; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <div>
+                                <h3 style="margin: 0; color: #9a3412; font-size: 18px;">⏰ Nhắc hạn sử dụng sản phẩm</h3>
+                                <p style="margin: 4px 0 0 0; color: #9a3412; font-size: 13px;">${alerts.length} sản phẩm đã hết hạn hoặc còn dưới 3 tháng.</p>
+                            </div>
+                            <button onclick="app.loadPage('products')" style="background: #ea580c; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: 600;">Xem sản phẩm</button>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px;">
+                            ${visibleAlerts.map(({ product, info }) => `
+                                <div style="background: white; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px;">
+                                    <div style="display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+                                        <strong style="color: #1f2937;">${product.name}</strong>
+                                        <span style="color: ${info.statusColor}; font-weight: 700;">${info.statusIcon}</span>
+                                    </div>
+                                    <div style="font-size: 13px; color: #4b5563;">${product.id} · HSD: ${info.displayDate}</div>
+                                    <div style="font-size: 13px; color: ${info.statusColor}; font-weight: 700; margin-top: 4px;">${info.statusText}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        ${hiddenCount > 0 ? `<div style="text-align: center; margin-top: 10px; font-size: 13px; color: #9a3412;">... và ${hiddenCount} sản phẩm khác</div>` : ''}
+                    </div>
+                `;
+            }
+
             getExpensePeriodRange(period = 'month') {
                 const today = this.getVietnamTime();
                 const startDate = new Date(today);
@@ -1214,6 +1276,8 @@ window._supabaseData = null
                             </div>
                         </div>
 
+                        ${this.renderProductExpiryAlerts()}
+
                         <!-- Quick Actions -->
                         <div class="quick-actions">
                             <h2 class="section-title">Thao tác nhanh</h2>
@@ -1394,20 +1458,24 @@ window._supabaseData = null
             }
 
             getProductsContent() {
-                const productsTable = this.demoData.products.map((product, index) => `
-                    <div class="activity-item">
+                const productsTable = this.demoData.products.map((product, index) => {
+                    const expiryInfo = this.getProductExpiryInfo(product);
+                    return `
+                    <div class="activity-item" ondblclick="app.showEditProductForm('${product.id}')" title="Nhấp đúp để chỉnh sửa sản phẩm" style="cursor: pointer;">
                         <div class="activity-icon ${product.stock < 10 ? 'warning' : 'success'}">📦</div>
                         <div class="activity-content">
                             <div class="activity-title">${product.name} (${product.id})</div>
                             <div class="activity-desc">💰 Bán: ${product.price.toLocaleString('vi-VN')} VNĐ | 💸 Nhập: ${product.importPrice?.toLocaleString('vi-VN') || 'N/A'} VNĐ | 📂 ${product.category}</div>
                             <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">📥 Đã mua: ${product.purchasedQty || 0} | 📤 Đã bán: ${product.soldQty || 0}</div>
+                            ${expiryInfo ? `<div style="font-size: 12px; color: ${expiryInfo.statusColor}; margin-top: 4px; font-weight: 600;">${expiryInfo.statusIcon} HSD: ${expiryInfo.displayDate} · ${expiryInfo.statusText}</div>` : '<div style="font-size: 12px; color: #6b7280; margin-top: 4px;">⏳ HSD: Chưa nhập</div>'}
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <div class="activity-time">Tồn: ${product.stock} ${product.stock < 10 ? '⚠️' : '✅'}</div>
-                            <button onclick="app.deleteProduct(${index})" style="background: #ef4444; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Xóa</button>
+                            <button onclick="event.stopPropagation(); app.deleteProduct(${index})" ondblclick="event.stopPropagation()" style="background: #ef4444; color: white; padding: 4px 8px; border: none; border-radius: 4px; cursor: pointer;">Xóa</button>
                         </div>
                     </div>
-                `).join('');
+                `;
+                }).join('');
 
                 return `
                     <div class="fade-in">
@@ -1573,12 +1641,13 @@ window._supabaseData = null
                             </div>
 
                             <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                                <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; background: #f8fafc; font-weight: 600; color: #374151; border-bottom: 1px solid #e5e7eb;">
+                                <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; background: #f8fafc; font-weight: 600; color: #374151; border-bottom: 1px solid #e5e7eb;">
                                     <div>Sản phẩm</div>
                                     <div>Giá bán</div>
                                     <div>Tồn kho</div>
                                     <div>Tối thiểu</div>
                                     <div>Trạng thái</div>
+                                    <div>HSD</div>
                                     <div>Thao tác</div>
                                 </div>
                                 ${this.demoData.products.map((product, index) => {
@@ -1586,9 +1655,10 @@ window._supabaseData = null
                                     const statusColor = stockStatus === 'out' ? '#ef4444' : stockStatus === 'low' ? '#ef4444' : stockStatus === 'warning' ? '#f59e0b' : '#10b981';
                                     const statusText = stockStatus === 'out' ? 'Hết hàng' : stockStatus === 'low' ? 'Sắp hết' : stockStatus === 'warning' ? 'Ít hàng' : 'Đủ hàng';
                                     const statusIcon = stockStatus === 'out' ? '🚫' : stockStatus === 'low' ? '⚠️' : stockStatus === 'warning' ? '⚡' : '✅';
+                                    const expiryInfo = this.getProductExpiryInfo(product);
 
                                     return `
-                                        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; border-bottom: 1px solid #f1f5f9; align-items: center; ${index % 2 === 0 ? 'background: #fafbfc;' : 'background: white;'}">
+                                        <div ondblclick="app.showEditProductForm('${product.id}')" title="Nhấp đúp để chỉnh sửa sản phẩm" style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; border-bottom: 1px solid #f1f5f9; align-items: center; cursor: pointer; ${index % 2 === 0 ? 'background: #fafbfc;' : 'background: white;'}">
                                             <div>
                                                 <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">${product.name}</div>
                                                 <div style="font-size: 12px; color: #6b7280;">${product.id} • ${product.category}</div>
@@ -1606,7 +1676,10 @@ window._supabaseData = null
                                                 <span style="font-size: 16px;">${statusIcon}</span>
                                                 <span style="color: ${statusColor}; font-weight: 500; font-size: 13px;">${statusText}</span>
                                             </div>
-                                            <button onclick="app.showProductDetail('${product.id}')" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 500;">
+                                            <div style="font-size: 12px;">
+                                                ${expiryInfo ? `<span style="color: ${expiryInfo.statusColor}; font-weight: 600;">${expiryInfo.statusIcon} ${expiryInfo.displayDate}</span>` : '<span style="color: #9ca3af;">—</span>'}
+                                            </div>
+                                            <button onclick="event.stopPropagation(); app.showProductDetail('${product.id}')" ondblclick="event.stopPropagation()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 500;">
                                                 Chi tiết
                                             </button>
                                         </div>
@@ -6188,10 +6261,14 @@ window._supabaseData = null
                                         <input type="number" name="minStock" value="10" required min="0" style="width: 100%; padding: 12px; border: 2px solid #f59e0b; border-radius: 8px;" placeholder="Cảnh báo khi dưới...">
                                     </div>
                                 </div>
+                                <div style="margin-bottom: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">📅 Hạn sử dụng:</label>
+                                    <input type="date" name="expiryDate" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                </div>
                                 <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
                                     <div style="display: flex; align-items: center; gap: 8px; color: #92400e; font-size: 14px;">
                                         <span>💡</span>
-                                        <span><strong>Mẹo:</strong> Hệ thống sẽ cảnh báo khi tồn kho thấp hơn hoặc bằng ngưỡng tối thiểu</span>
+                                        <span><strong>Mẹo:</strong> Hệ thống sẽ cảnh báo khi tồn kho thấp hơn ngưỡng tối thiểu và khi sản phẩm sắp hết hạn sử dụng</span>
                                     </div>
                                 </div>
                                 <div style="margin-bottom: 24px;">
@@ -6284,10 +6361,14 @@ window._supabaseData = null
                                         <input type="number" name="minStock" value="${product.minStock || 10}" required min="0" style="width: 100%; padding: 12px; border: 2px solid #f59e0b; border-radius: 8px;" placeholder="Cảnh báo khi dưới...">
                                     </div>
                                 </div>
+                                <div style="margin-bottom: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">📅 Hạn sử dụng:</label>
+                                    <input type="date" name="expiryDate" value="${product.expiryDate || ''}" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                </div>
                                 <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
                                     <div style="display: flex; align-items: center; gap: 8px; color: #92400e; font-size: 14px;">
                                         <span>💡</span>
-                                        <span><strong>Mẹo:</strong> Hệ thống sẽ cảnh báo khi tồn kho thấp hơn hoặc bằng ngưỡng tối thiểu</span>
+                                        <span><strong>Mẹo:</strong> Hệ thống sẽ cảnh báo khi tồn kho thấp hơn ngưỡng tối thiểu và khi sản phẩm sắp hết hạn sử dụng</span>
                                     </div>
                                 </div>
                                 <div style="margin-bottom: 24px;">
@@ -6331,7 +6412,8 @@ window._supabaseData = null
                     price: parseInt(formData.get('price')),
                     stock: parseInt(formData.get('stock')),
                     minStock: parseInt(formData.get('minStock')),
-                    supplier: formData.get('supplier')
+                    supplier: formData.get('supplier'),
+                    expiryDate: formData.get('expiryDate') || ''
                 };
 
                 this.saveToLocalStorage();
