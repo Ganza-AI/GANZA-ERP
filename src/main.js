@@ -55,7 +55,14 @@ window._supabaseData = null
                 if (window._supabaseDataLoaded && window._supabaseData) {
                     console.log('☁️ LOADING DATA FROM SUPABASE');
                     if (this.isSupabaseDataUseful(window._supabaseData)) {
-                        this.demoData = window._supabaseData;
+                        const localData = this.getLocalStorageData();
+                        if (this.shouldPreferLocalData(localData, window._supabaseData)) {
+                            console.warn('localStorage has newer or more complete data than Supabase snapshot. Using local data and resyncing.');
+                            this.demoData = localData;
+                            window._supabaseData = this.demoData;
+                        } else {
+                            this.demoData = window._supabaseData;
+                        }
 
                         // Đảm bảo các trường bắt buộc tồn tại
                         this.demoData.customers = this.demoData.customers || [];
@@ -171,8 +178,50 @@ window._supabaseData = null
                     return false;
                 }
 
-                const arraysToCheck = ['customers', 'suppliers', 'products', 'categories', 'orders', 'purchases', 'expenses', 'inventoryHistory'];
+                const arraysToCheck = this.getPersistentDataKeys();
                 return arraysToCheck.some(key => Array.isArray(data[key]) && data[key].length > 0);
+            }
+
+            getPersistentDataKeys() {
+                return ['customers', 'suppliers', 'products', 'categories', 'orders', 'purchases', 'expenses', 'inventoryHistory', 'deliveries'];
+            }
+
+            getLocalStorageData() {
+                const saved = localStorage.getItem('erp_vietnam_data');
+                if (!saved || saved.trim() === '') return null;
+                try {
+                    return JSON.parse(saved);
+                } catch (error) {
+                    console.warn('Cannot parse localStorage data while comparing startup sources:', error);
+                    return null;
+                }
+            }
+
+            getRecordIdentity(record) {
+                return String(record?._supabaseId || record?.id || record?.code || record?.orderCode || record?.productCode || '').trim();
+            }
+
+            getDataRecordCount(data) {
+                return this.getPersistentDataKeys().reduce((count, key) => count + (Array.isArray(data?.[key]) ? data[key].length : 0), 0);
+            }
+
+            shouldPreferLocalData(localData, supabaseData) {
+                if (!this.isSupabaseDataUseful(localData)) return false;
+                if (!this.isSupabaseDataUseful(supabaseData)) return true;
+
+                if (this.getDataRecordCount(localData) > this.getDataRecordCount(supabaseData)) {
+                    return true;
+                }
+
+                return this.getPersistentDataKeys().some(key => {
+                    const localRows = Array.isArray(localData[key]) ? localData[key] : [];
+                    const remoteRows = Array.isArray(supabaseData[key]) ? supabaseData[key] : [];
+                    const remoteIds = new Set(remoteRows.map(row => this.getRecordIdentity(row)).filter(Boolean));
+                    return localRows.some(row => {
+                        const identity = this.getRecordIdentity(row);
+                        return identity && !remoteIds.has(identity);
+                    });
+                });
             }
 
             // Migrate data để thêm minStock cho sản phẩm cũ
@@ -338,10 +387,11 @@ window._supabaseData = null
                 this.demoData.inventoryHistory.forEach(entry => {
                     const createdAt = entry.timestamp ? new Date(entry.timestamp) : entry.created_at ? new Date(entry.created_at) : null;
                     if (createdAt) {
-                        const dateValue = createdAt.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+                        const dateValue = this.formatDateInputValue(createdAt);
                         const timeValue = createdAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
-                        if (!entry.date || entry.date !== dateValue) {
-                            entry.date = entry.date || dateValue;
+                        const nextDate = this.normalizeDateInputValue(entry.date) || dateValue;
+                        if (entry.date !== nextDate) {
+                            entry.date = nextDate;
                             needsSave = true;
                         }
                         if (!entry.time || entry.time !== timeValue) {
@@ -365,8 +415,21 @@ window._supabaseData = null
                         entry.productId = entry.product_code;
                         needsSave = true;
                     }
+                    if (!entry.productId && entry.productCode) {
+                        entry.productId = entry.productCode;
+                        needsSave = true;
+                    }
+                    if (!entry.productCode && entry.productId) {
+                        entry.productCode = entry.productId;
+                        needsSave = true;
+                    }
                     if (!entry.productName && entry.product_name) {
                         entry.productName = entry.product_name;
+                        needsSave = true;
+                    }
+                    const normalizedDate = this.normalizeDateInputValue(entry.date);
+                    if (normalizedDate && entry.date !== normalizedDate) {
+                        entry.date = normalizedDate;
                         needsSave = true;
                     }
                     if (typeof entry.quantity === 'string') {
@@ -498,6 +561,29 @@ window._supabaseData = null
                 const month = String(date.getMonth() + 1).padStart(2, '0');
                 const day = String(date.getDate()).padStart(2, '0');
                 return `${year}-${month}-${day}`;
+            }
+
+            normalizeDateInputValue(value) {
+                if (!value) return '';
+                const text = String(value).trim();
+                if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+                const vnDate = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+                if (vnDate) {
+                    const day = vnDate[1].padStart(2, '0');
+                    const month = vnDate[2].padStart(2, '0');
+                    return `${vnDate[3]}-${month}-${day}`;
+                }
+
+                const parsed = new Date(text);
+                if (!Number.isNaN(parsed.getTime())) {
+                    return this.formatDateInputValue(parsed);
+                }
+                return '';
+            }
+
+            isInventoryImportType(type) {
+                return type === 'import' || type === 'purchase';
             }
 
             getProductExpiryInfo(product) {
@@ -1151,9 +1237,8 @@ window._supabaseData = null
                 console.log('📄 Loading page:', pageName);
                 this.currentPage = pageName;
 
-                // FORCE reload toàn bộ dữ liệu từ localStorage
-                console.log('🔄 FORCE RELOADING DATA FOR PAGE:', pageName);
-                this.initializeData();
+                // Startup data is loaded once; keep current in-memory edits while navigating.
+                console.log('🔄 USING CURRENT DATA FOR PAGE:', pageName);
 
                 const content = this.getPageContent(pageName);
                 const titles = this.getPageTitles(pageName);
@@ -1698,10 +1783,10 @@ window._supabaseData = null
                 const historyData = this.demoData.inventoryHistory || [];
 
                 // Tính toán thống kê
-                const totalImports = historyData.filter(h => h.type === 'import').length;
+                const totalImports = historyData.filter(h => this.isInventoryImportType(h.type)).length;
                 const totalExports = historyData.filter(h => h.type === 'export').length;
                 const totalDeliveries = historyData.filter(h => h.type === 'delivery').length;
-                const totalImportQty = historyData.filter(h => h.type === 'import').reduce((sum, h) => sum + h.quantity, 0);
+                const totalImportQty = historyData.filter(h => this.isInventoryImportType(h.type)).reduce((sum, h) => sum + h.quantity, 0);
                 const totalExportQty = historyData.filter(h => h.type === 'export').reduce((sum, h) => sum + h.quantity, 0);
                 const totalDeliveryQty = historyData.filter(h => h.type === 'delivery').reduce((sum, h) => sum + h.quantity, 0);
 
@@ -1711,7 +1796,7 @@ window._supabaseData = null
                     if (!productStats[entry.productId]) {
                         productStats[entry.productId] = { name: entry.productName, imports: 0, exports: 0, deliveries: 0 };
                     }
-                    if (entry.type === 'import') {
+                    if (this.isInventoryImportType(entry.type)) {
                         productStats[entry.productId].imports += entry.quantity;
                     } else if (entry.type === 'delivery') {
                         productStats[entry.productId].deliveries += entry.quantity;
@@ -1723,7 +1808,7 @@ window._supabaseData = null
                 const historyTable = historyData.map((entry, index) => {
                     let typeEmoji, typeLabel, typeColor, qtyColor;
 
-                    if (entry.type === 'import') {
+                    if (this.isInventoryImportType(entry.type)) {
                         typeEmoji = '📥';
                         typeLabel = 'Nhập kho';
                         typeColor = '#10b981';
@@ -1740,7 +1825,7 @@ window._supabaseData = null
                         qtyColor = '#ef4444';
                     }
 
-                    const qtyChange = (entry.type === 'import') ? `+${entry.quantity}` : `-${entry.quantity}`;
+                    const qtyChange = this.isInventoryImportType(entry.type) ? `+${entry.quantity}` : `-${entry.quantity}`;
                     const reasonText = entry.type === 'delivery' 
                         ? `${entry.reason} (${entry.deliveryMethod})`
                         : entry.reason;
@@ -1925,7 +2010,7 @@ window._supabaseData = null
                         .filter(h => h.productId === product.id)
                         .sort((a, b) => new Date(a.date + ' ' + a.time) - new Date(b.date + ' ' + b.time));
 
-                    const totalImported = history.filter(h => h.type === 'import').reduce((sum, h) => sum + h.quantity, 0);
+                    const totalImported = history.filter(h => this.isInventoryImportType(h.type)).reduce((sum, h) => sum + h.quantity, 0);
                     const totalDelivered = history.filter(h => h.type === 'delivery').reduce((sum, h) => sum + h.quantity, 0);
                     const totalExported = history.filter(h => h.type === 'export').reduce((sum, h) => sum + h.quantity, 0);
                     const netFlow = totalImported - totalDelivered - totalExported;
@@ -2090,7 +2175,7 @@ window._supabaseData = null
                 const history = this.demoData.inventoryHistory || [];
 
                 // Calculate totals
-                const totalImported = history.filter(h => h.type === 'import').reduce((sum, h) => sum + h.quantity, 0);
+                const totalImported = history.filter(h => this.isInventoryImportType(h.type)).reduce((sum, h) => sum + h.quantity, 0);
                 const totalDelivered = history.filter(h => h.type === 'delivery').reduce((sum, h) => sum + h.quantity, 0);
                 const totalExported = history.filter(h => h.type === 'export').reduce((sum, h) => sum + h.quantity, 0);
 
@@ -2098,7 +2183,7 @@ window._supabaseData = null
                 const productFlow = {};
                 this.demoData.products.forEach(p => {
                     productFlow[p.id] = {
-                        imported: history.filter(h => h.productId === p.id && h.type === 'import').reduce((sum, h) => sum + h.quantity, 0),
+                        imported: history.filter(h => h.productId === p.id && this.isInventoryImportType(h.type)).reduce((sum, h) => sum + h.quantity, 0),
                         delivered: history.filter(h => h.productId === p.id && h.type === 'delivery').reduce((sum, h) => sum + h.quantity, 0),
                         exported: history.filter(h => h.productId === p.id && h.type === 'export').reduce((sum, h) => sum + h.quantity, 0)
                     };
@@ -2111,7 +2196,7 @@ window._supabaseData = null
                     if (!timeSeries[key]) {
                         timeSeries[key] = { import: 0, delivery: 0, export: 0 };
                     }
-                    if (h.type === 'import') timeSeries[key].import += h.quantity;
+                    if (this.isInventoryImportType(h.type)) timeSeries[key].import += h.quantity;
                     if (h.type === 'delivery') timeSeries[key].delivery += h.quantity;
                     if (h.type === 'export') timeSeries[key].export += h.quantity;
                 });
@@ -5233,7 +5318,13 @@ window._supabaseData = null
                 try {
                     this.syncCustomerDebtTotals();
                     const jsonStr = JSON.stringify(this.demoData);
+                    if (this.isSupabaseDataUseful(this.demoData)) {
+                        localStorage.removeItem('erp_vietnam_empty_mode');
+                    }
                     localStorage.setItem('erp_vietnam_data', jsonStr);
+                    if (window._supabaseDataLoaded) {
+                        window._supabaseData = JSON.parse(jsonStr);
+                    }
                     console.log('✅ Data saved to localStorage:', jsonStr.length, 'bytes');
                 console.log('DEBUG demoData snapshot:', {
                     orders: (this.demoData.orders || []).map(o => ({
@@ -7388,7 +7479,7 @@ window._supabaseData = null
 
                 const hasInventoryHistory = (this.demoData.inventoryHistory || []).some(entry => {
                     const linkedByReference = entry.referenceCode === purchase.id || entry.purchaseId === purchase.id;
-                    const linkedByNotes = entry.type === 'purchase' && String(entry.notes || '').includes(purchase.id);
+                    const linkedByNotes = this.isInventoryImportType(entry.type) && String(entry.notes || '').includes(purchase.id);
                     return linkedByReference || linkedByNotes;
                 });
                 return hasInventoryHistory ? 'Đã nhập kho' : 'Chưa nhập kho';
@@ -7575,7 +7666,7 @@ window._supabaseData = null
                 const historyBefore = (this.demoData.inventoryHistory || []).length;
                 this.demoData.inventoryHistory = (this.demoData.inventoryHistory || []).filter(entry => {
                     const linkedByReference = entry.referenceCode === purchaseId || entry.purchaseId === purchaseId;
-                    const linkedByNotes = entry.type === 'purchase' && String(entry.notes || '').includes(purchaseId);
+                    const linkedByNotes = this.isInventoryImportType(entry.type) && String(entry.notes || '').includes(purchaseId);
                     return !(linkedByReference || linkedByNotes);
                 });
                 const removedHistoryCount = historyBefore - this.demoData.inventoryHistory.length;
@@ -10275,7 +10366,7 @@ window._supabaseData = null
 
                 // Lọc theo loại giao dịch
                 if (filterType) {
-                    filtered = filtered.filter(h => h.type === filterType);
+                    filtered = filtered.filter(h => filterType === 'import' ? this.isInventoryImportType(h.type) : h.type === filterType);
                 }
 
                 // Lọc theo sản phẩm
@@ -10302,7 +10393,7 @@ window._supabaseData = null
                         tableBody.innerHTML = filtered.map((entry) => {
                             let typeEmoji, typeLabel, qtyColor;
 
-                            if (entry.type === 'import') {
+                            if (this.isInventoryImportType(entry.type)) {
                                 typeEmoji = '📥';
                                 typeLabel = 'Nhập kho';
                                 qtyColor = '#10b981';
@@ -10316,7 +10407,7 @@ window._supabaseData = null
                                 qtyColor = '#ef4444';
                             }
 
-                            const qtyChange = (entry.type === 'import') ? `+${entry.quantity}` : `-${entry.quantity}`;
+                            const qtyChange = this.isInventoryImportType(entry.type) ? `+${entry.quantity}` : `-${entry.quantity}`;
                             const reasonText = entry.type === 'delivery' 
                                 ? `${entry.reason} (${entry.deliveryMethod})`
                                 : entry.reason;
@@ -10362,7 +10453,7 @@ window._supabaseData = null
 
                 historyData.forEach(entry => {
                     let type;
-                    if (entry.type === 'import') {
+                    if (this.isInventoryImportType(entry.type)) {
                         type = 'Nhập kho';
                     } else if (entry.type === 'delivery') {
                         type = 'Giao hàng';
@@ -10370,7 +10461,7 @@ window._supabaseData = null
                         type = 'Xuất kho';
                     }
 
-                    const qty = (entry.type === 'import') ? `+${entry.quantity}` : `-${entry.quantity}`;
+                    const qty = this.isInventoryImportType(entry.type) ? `+${entry.quantity}` : `-${entry.quantity}`;
                     const customer = entry.customerName || '';
                     const deliveryMethod = entry.deliveryMethod || '';
 

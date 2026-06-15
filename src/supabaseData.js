@@ -12,6 +12,29 @@ function getLocalDateString(date = new Date()) {
     return `${year}-${month}-${day}`
 }
 
+function formatDateInVietnam(date = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(date).reduce((acc, part) => {
+        acc[part.type] = part.value
+        return acc
+    }, {})
+    return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+function formatTimeInVietnam(date = new Date()) {
+    return new Intl.DateTimeFormat('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }).format(date)
+}
+
 // ==================== CUSTOMERS ====================
 
 export async function getCustomers() {
@@ -19,7 +42,7 @@ export async function getCustomers() {
         .from('customers')
         .select('*')
         .order('code', { ascending: true })
-    if (error) { console.error('getCustomers error:', error); return [] }
+    if (error) { console.error('getCustomers error:', error); throw error }
     return data
 }
 
@@ -70,7 +93,7 @@ export async function getSuppliers() {
         .from('suppliers')
         .select('*')
         .order('code', { ascending: true })
-    if (error) { console.error('getSuppliers error:', error); return [] }
+    if (error) { console.error('getSuppliers error:', error); throw error }
     return data
 }
 
@@ -121,7 +144,7 @@ export async function getCategories() {
         .from('categories')
         .select('*')
         .order('code', { ascending: true })
-    if (error) { console.error('getCategories error:', error); return [] }
+    if (error) { console.error('getCategories error:', error); throw error }
     return data
 }
 
@@ -162,7 +185,7 @@ export async function getProducts() {
         .from('products')
         .select('*')
         .order('code', { ascending: true })
-    if (error) { console.error('getProducts error:', error); return [] }
+    if (error) { console.error('getProducts error:', error); throw error }
     return data
 }
 
@@ -228,7 +251,7 @@ export async function getOrders() {
         `)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false })
-    if (error) { console.error('getOrders error:', error); return [] }
+    if (error) { console.error('getOrders error:', error); throw error }
     return data
 }
 
@@ -300,7 +323,14 @@ export async function getDeliveries() {
         .from('deliveries')
         .select('*')
         .order('delivery_date', { ascending: false })
-    if (error) { console.error('getDeliveries error:', error); return [] }
+    if (error) {
+        if (isMissingTable(error, 'deliveries')) {
+            console.warn('Supabase deliveries table is missing. Run supabase_deliveries_migration.sql to persist delivery history.')
+            return []
+        }
+        console.error('getDeliveries error:', error)
+        throw error
+    }
     return data
 }
 
@@ -364,7 +394,7 @@ export async function getPurchases() {
         `)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false })
-    if (error) { console.error('getPurchases error:', error); return [] }
+    if (error) { console.error('getPurchases error:', error); throw error }
     return data
 }
 
@@ -417,7 +447,7 @@ export async function getInventoryHistory() {
         .from('inventory_history')
         .select('*')
         .order('created_at', { ascending: false })
-    if (error) { console.error('getInventoryHistory error:', error); return [] }
+    if (error) { console.error('getInventoryHistory error:', error); throw error }
     return data
 }
 
@@ -443,10 +473,11 @@ export async function getExpenses() {
         if (isMissingExpensesTable(error)) {
             _expensesTableAvailable = false
             console.warn('⚠️ Supabase expenses table is missing. Run supabase_expenses_migration.sql to persist operating expenses.')
+            return []
         } else {
             console.error('getExpenses error:', error)
+            throw error
         }
-        return []
     }
     return data
 }
@@ -607,11 +638,12 @@ export async function loadAllData() {
 
     const mappedInventoryHistory = inventoryHistory.map(h => {
         const createdAt = h.created_at ? new Date(h.created_at) : new Date();
-        const formattedDate = createdAt.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-        const formattedTime = createdAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
+        const formattedDate = formatDateInVietnam(createdAt);
+        const formattedTime = formatTimeInVietnam(createdAt);
         return {
             id: h.id,
             _supabaseId: h.id,
+            productId: h.product_code || '',
             productCode: h.product_code || '',
             productName: h.product_name || '',
             type: h.type,
@@ -632,6 +664,7 @@ export async function loadAllData() {
 
     const mappedDeliveries = deliveries.map(d => ({
         id: d.id,
+        _supabaseId: d.id,
         orderCode: d.order_code || '',
         productCode: d.product_code || '',
         customerId: d.customer_id || '',
@@ -698,6 +731,20 @@ let _productExpiryColumnAvailable = true
 let _paymentTrackingColumnsAvailable = true
 let _expensesTableAvailable = true
 
+const PERSISTENT_DATA_KEYS = ['customers', 'suppliers', 'products', 'categories', 'orders', 'purchases', 'expenses', 'inventoryHistory', 'deliveries']
+
+function hasPersistableData(demoData) {
+    return PERSISTENT_DATA_KEYS.some(key => Array.isArray(demoData?.[key]) && demoData[key].length > 0)
+}
+
+function isExplicitEmptyMode() {
+    try {
+        return typeof localStorage !== 'undefined' && localStorage.getItem('erp_vietnam_empty_mode') === 'true'
+    } catch (error) {
+        return false
+    }
+}
+
 function getOrderPaymentTracking(order) {
     const paymentHistory = Array.isArray(order.paymentHistory) ? order.paymentHistory.map(payment => ({
         id: payment.id,
@@ -731,6 +778,12 @@ function isMissingPaymentTrackingColumn(error) {
 function isMissingExpensesTable(error) {
     const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
     return error?.code === '42P01' || error?.code === 'PGRST205' || (message.includes('expenses') && message.includes('schema cache'))
+}
+
+function isMissingTable(error, tableName) {
+    const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+    const table = String(tableName || '').toLowerCase()
+    return error?.code === '42P01' || error?.code === 'PGRST205' || (table && message.includes(table) && message.includes('schema cache'))
 }
 
 function isMissingProductExpiryColumn(error) {
@@ -781,6 +834,10 @@ export async function syncAllDataToSupabaseImmediate(demoData) {
 async function _performSync(demoData) {
     if (_isSyncing) {
         console.log('⏳ Sync already in progress, skipping...')
+        return false
+    }
+    if (!hasPersistableData(demoData) && !isExplicitEmptyMode()) {
+        console.warn('Refusing to sync empty dataset without explicit empty mode. This prevents accidental cloud data deletion after a failed load.')
         return false
     }
     _isSyncing = true
