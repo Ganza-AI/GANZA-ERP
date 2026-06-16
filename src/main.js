@@ -4,6 +4,8 @@ import { loadAllData, syncAllDataToSupabase, syncAllDataToSupabaseImmediate, del
 // Flag để biết đã load data từ Supabase chưa
 window._supabaseDataLoaded = false
 window._supabaseData = null
+window._supabaseSyncEnabled = false
+window._supabaseDataEmpty = false
         // HOSTING SOLUTION: Global storage với localStorage backup
         window.companyAssets = { 
             logo: localStorage.getItem('company_logo') || null, 
@@ -63,6 +65,7 @@ window._supabaseData = null
                         } else {
                             this.demoData = window._supabaseData;
                         }
+                        window._supabaseDataEmpty = false;
 
                         // Đảm bảo các trường bắt buộc tồn tại
                         this.demoData.customers = this.demoData.customers || [];
@@ -86,6 +89,10 @@ window._supabaseData = null
                         console.log(`   - Customers: ${this.demoData.customers.length}`);
                         console.log(`   - Products: ${this.demoData.products.length}`);
                         console.log(`   - Orders: ${this.demoData.orders.length}`);
+                        if (window._supabaseSyncEnabled && window._supabaseDataEmpty && this.isSupabaseDataUseful(this.demoData)) {
+                            console.log('Supabase is empty; syncing localStorage data to cloud.');
+                            this.saveToLocalStorage();
+                        }
                         console.log(`   - Suppliers: ${this.demoData.suppliers.length}`);
                         console.log(`   - Categories: ${this.demoData.categories.length}`);
                         console.log(`   - Deliveries: ${this.demoData.deliveries.length}`);
@@ -96,6 +103,7 @@ window._supabaseData = null
                     }
 
                     console.warn('⚠️ Supabase data is empty or incomplete, falling back to localStorage');
+                    window._supabaseDataEmpty = true;
                     window._supabaseDataLoaded = false;
                     window._supabaseData = null;
                 }
@@ -5322,7 +5330,7 @@ window._supabaseData = null
                         localStorage.removeItem('erp_vietnam_empty_mode');
                     }
                     localStorage.setItem('erp_vietnam_data', jsonStr);
-                    if (window._supabaseDataLoaded) {
+                    if (window._supabaseSyncEnabled) {
                         window._supabaseData = JSON.parse(jsonStr);
                     }
                     console.log('✅ Data saved to localStorage:', jsonStr.length, 'bytes');
@@ -5338,7 +5346,7 @@ window._supabaseData = null
                 });
 
                     // Đồng bộ lên Supabase (debounced 2 giây)
-                    if (window._supabaseDataLoaded) {
+                    if (window._supabaseSyncEnabled) {
                         syncAllDataToSupabase(this.demoData);
                         console.log('☁️ Supabase sync scheduled...');
                     }
@@ -15317,6 +15325,7 @@ window._supabaseData = null
         async function initializeApp(user) {
             document.getElementById('loginScreen').style.display = 'none';
             document.getElementById('appContainer').style.display = 'flex';
+            window._supabaseSyncEnabled = true;
 
             try {
                 // Load data từ Supabase trước
@@ -15348,6 +15357,8 @@ window._supabaseData = null
                 }, 200);
                 showNotification(`Đăng nhập thành công! Chào mừng ${user.email}`, 'success');
             } catch (initError) {
+                window._supabaseSyncEnabled = false;
+                window._supabaseDataEmpty = false;
                 console.error('Application init failed', initError);
                 const errorMessage = document.getElementById('errorMessage');
                 errorMessage.textContent = 'Lỗi khởi tạo ứng dụng: ' + (initError.message || initError);
@@ -15363,6 +15374,8 @@ window._supabaseData = null
                 await initializeApp(session.user);
                 return;
             }
+            window._supabaseSyncEnabled = false;
+            window._supabaseDataEmpty = false;
             document.getElementById('loginScreen').style.display = 'flex';
             document.getElementById('appContainer').style.display = 'none';
         }
@@ -15426,7 +15439,7 @@ window._supabaseData = null
                     try {
                         console.log('Flushing local data before logout...');
                         app.saveToLocalStorage?.();
-                        if (window._supabaseDataLoaded) {
+                        if (window._supabaseSyncEnabled) {
                             const synced = await syncAllDataToSupabaseImmediate(app.demoData);
                             if (!synced) {
                                 showNotification('Không thể đồng bộ dữ liệu lên cloud. Vui lòng thử đăng xuất lại sau.', 'error');
@@ -15449,6 +15462,8 @@ window._supabaseData = null
                 // Clear Supabase data cache
                 window._supabaseDataLoaded = false;
                 window._supabaseData = null;
+                window._supabaseSyncEnabled = false;
+                window._supabaseDataEmpty = false;
                 // Hide main app
                 document.getElementById('appContainer').style.display = 'none';
                 // Show login screen
@@ -15469,6 +15484,34 @@ window._supabaseData = null
 
         // Initialize the application
         let app;
+
+        async function flushLocalDataToSupabase() {
+            if (!window._supabaseSyncEnabled || !app?.demoData) {
+                return true;
+            }
+
+            try {
+                const synced = await syncAllDataToSupabaseImmediate(app.demoData);
+                if (synced) {
+                    window._supabaseDataLoaded = true;
+                    window._supabaseData = JSON.parse(JSON.stringify(app.demoData));
+                }
+                return synced;
+            } catch (error) {
+                console.warn('Could not flush local data to Supabase:', error);
+                return false;
+            }
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                flushLocalDataToSupabase();
+            }
+        });
+
+        window.addEventListener('pagehide', () => {
+            flushLocalDataToSupabase();
+        });
 
         // Global function to close modal (called from onclick)
         function closeModal(element) {

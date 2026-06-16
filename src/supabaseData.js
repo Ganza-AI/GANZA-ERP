@@ -813,8 +813,9 @@ export function syncAllDataToSupabase(demoData) {
         clearTimeout(_syncTimer)
     }
     _syncTimer = setTimeout(async () => {
+        _syncTimer = null
         await _performSync(demoData)
-    }, 2000)
+    }, 500)
 }
 
 /**
